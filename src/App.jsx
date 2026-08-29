@@ -6,25 +6,11 @@ function App() {
   const [role, setRole] = useState(null)
   const [loading, setLoading] = useState(true)
   const [authError, setAuthError] = useState(null)
-  const [debugInfo, setDebugInfo] = useState(null)
 
   useEffect(() => {
     const hashParams = new URLSearchParams(window.location.hash.slice(1))
     const access_token = hashParams.get('access_token')
     const refresh_token = hashParams.get('refresh_token')
-
-    const checkChars = (label, str) => {
-      if (!str) return `${label}: missing`
-      for (let i = 0; i < str.length; i++) {
-        if (str.charCodeAt(i) > 255) {
-          return `${label}: bad char at index ${i}, code ${str.charCodeAt(i)}`
-        }
-      }
-      return `${label}: OK, length ${str.length}`
-    }
-    if (access_token || refresh_token) {
-      setDebugInfo(`${checkChars('access_token', access_token)} | ${checkChars('refresh_token', refresh_token)}`)
-    }
 
     const init = access_token && refresh_token
       ? supabase.auth.setSession({ access_token, refresh_token }).then(({ error }) => {
@@ -88,7 +74,6 @@ function App() {
         <div>
           <button onClick={signInWithGoogle}>Sign in with Google</button>
           {authError && <p style={{ color: 'red' }}>Auth error: {authError}</p>}
-          {debugInfo && <p style={{ color: 'blue' }}>Debug: {debugInfo}</p>}
         </div>
       )}
     </div>
