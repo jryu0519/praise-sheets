@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from './supabaseClient'
+import Team from './Team'
 
 function App() {
   const [session, setSession] = useState(null)
@@ -69,6 +70,7 @@ function App() {
           <p>Signed in as {session.user.email}</p>
           <p>Role: {role ?? 'loading...'}</p>
           <button onClick={signOut}>Sign out</button>
+          {role && <Team currentUserId={session.user.id} isHost={role === 'host'} />}
         </div>
       ) : (
         <div>
