@@ -30,10 +30,38 @@ React + Vite (JavaScript) · Supabase (auth, Postgres, storage, realtime) · PDF
       width, 1 page below it, sliding one page per swipe (1-2, 2-3, 3-4...);
       Prev/Next buttons and a page counter; plus a fullscreen toggle (Expand
       / "Back to regular size", bottom-right) for small phone screens
+- [x] **Navigation shell + Sessions UI** (not phase-numbered — a UI revamp
+      request, 2026-08-29): top-left "☰ Menu" (fixed position) switches
+      between Home / Sessions / Team member organization (`App.jsx`); Home
+      shows a "Pri Music Sheetlist" title over the song list, sortable by
+      title/key/date (`Charts.jsx`); new `Sessions.jsx` lets hosts/editors
+      create a session (title + ordered charts) and lets anyone open a
+      session's charts individually or all combined into one continuous
+      swipeable pager — `PdfViewer.jsx` now takes a `charts: [{id, url}]`
+      list instead of a single chart, with pages keyed by `chartId:pageNumber`
+      so annotations and realtime sync work correctly across chart boundaries
 - [ ] Phase 5 — Real-time pings ← START HERE NEXT (see design notes below —
-      scope is bigger than a plain coordinate ping)
+      scope is bigger than a plain coordinate ping; now buildable, since
+      sessions finally have a UI to ping "within")
 - [ ] Phase 6 — Roles + host handoff refinements
 - [ ] Phase 7 — PWA (installable)
+
+## Navigation/Sessions build notes
+
+- `Sessions.jsx` creates a session by inserting into `sessions`, then
+  `session_charts` rows with `position` = the order charts were checked in
+  the create form (no drag-reorder UI yet — check order is the only way to
+  set order today).
+- The "View all (combined)" button fetches a signed URL per chart in the
+  session (`Promise.all`) and hands the whole list to `PdfViewer`, which
+  loads each chart's PDF in turn and appends its pages to one continuous
+  track — so page-turning crosses from one song's last page straight into
+  the next song's first page.
+- `PdfViewer`'s annotation storage/realtime logic is unchanged in substance
+  (still one row per chart_id + page_number) — the only change was
+  generalizing every lookup key from a bare `page_number` to
+  `` `${chartId}:${pageNumber}` `` so the same page number in two different
+  charts doesn't collide when both are open in one combined view.
 
 ## Viewer UX build notes (two-page pager + fullscreen)
 
