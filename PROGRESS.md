@@ -103,12 +103,49 @@ concrete style than the very first (lavender/black/lime) reference shared
       hidden from the default list, `charts.archived`) or permanently
       delete a chart; both are host-only at the RLS level (not just a
       hidden button) — editors can still upload but not remove
+- [x] **Personal alternate parts** (not phase-numbered — a real user need
+      raised mid-session, 2026-08-30): any signed-in member can upload
+      their own private extra PDF for a song (e.g. a pianist's piano part)
+      via a music-note icon on each song row. Viewing that song (from Home
+      or a session's individual song view — deliberately *not* the
+      combined multi-song view) appends the user's personal page(s) after
+      the main chart's own pages in the same pager. See build notes below
+      for why it's a fully separate system from `charts`/annotations.
 - [ ] Phase 6 — Roles + host handoff refinements ← START HERE NEXT (not yet
       scoped — "Team.jsx" today only has: change role dropdown, an
       unconfirmed one-click "Make host" transfer, and invite-by-email; no
-      way to remove a member or see/cancel a pending invite. Ask the user
-      what specifically needs refining before building.)
+      way to remove a member or see/cancel a pending invite. Asked the user
+      to prioritize these via AskUserQuestion on 2026-08-30 — they dismissed
+      it without picking, so still needs their input before building.)
 - [ ] Phase 7 — PWA (installable)
+
+## Personal alternate parts build notes
+
+- `chart_personal_parts` (chart_id, user_id, storage_path, unique on
+  chart_id+user_id) + a dedicated `personal_parts` storage bucket, both
+  RLS-scoped to the owner only (`user_id = auth.uid()` / path's leading
+  folder = `auth.uid()`). Any signed-in member can manage their own rows —
+  not gated to host/editor, since this is personal, not shared content.
+- **Deliberately excluded from the `charts`/annotation/realtime system
+  entirely** — no shared `chart_id` FK reuse, no annotations or sections on
+  personal pages, no ping targeting them. The key reason: `PdfViewer`'s
+  realtime channel name and annotation/section queries are derived from
+  the `charts` array it's given (`chartsKey`); if a personal part had been
+  folded into that same array, two people viewing "the same" chart would
+  end up on *different* channels/queries whenever only one of them had a
+  personal part attached, breaking shared collaboration for everyone. So
+  `PdfViewer` takes a separate `personalPart: { url } | null` prop —
+  rendered as extra page slots via a new `renderPageSlot()` helper (shared
+  with the normal chart-page-building code) but with no `attachDrawing()`
+  call and pageKeys under a fixed `personal:N` prefix, never touching
+  `chartsKey` or any DB query filter.
+- Chose not to reuse the `charts` table with an "owner" flag for personal
+  parts either (considered, then rejected) — it would have required
+  narrowing the existing "charts are readable by any signed-in user"
+  policy and adding insert/update/delete carve-outs throughout, plus a
+  circular dependency in the storage upload flow (file uploads before the
+  DB row referencing its path exists). A fully separate table+bucket was
+  simpler and avoided touching any existing policy.
 
 ## Phase 5 build notes (pings)
 
