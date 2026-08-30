@@ -26,8 +26,10 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
   const pageWrappersRef = useRef({}) // pageKey -> wrapper div (sized as a slot)
   const overlaysRef = useRef({}) // pageKey -> overlay canvas element
   const annotationsRef = useRef({}) // pageKey -> array of annotation rows (with id)
-  const pageLinesRef = useRef({}) // pageKey -> detected text lines (normalized bands), for pinging
-  const hoveredLineRef = useRef({}) // pageKey -> index into pageLinesRef.current[pageKey]
+  const chartLinesRef = useRef({}) // pageKey -> array of manually-marked line rows { id, y }, sorted ascending
+  const pageOrderRef = useRef([]) // pageKey list in track order, for jumping to a pinged page
+  const pingFlashRef = useRef({}) // pageKey -> { bandIndex, timeoutId } for the temporary ping highlight
+  const channelRef = useRef(null) // the realtime channel, so double-click can broadcast a ping on it
   const toolRef = useRef('view')
   const visibilityRef = useRef('personal')
   const colorRef = useRef(COLORS[0])
@@ -41,7 +43,7 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
   const fullscreenRef = useRef(false)
   const [error, setError] = useState(null)
   const [fullscreen, setFullscreen] = useState(false)
-  const [tool, setTool] = useState('view') // 'view' | 'draw' | 'text' | 'erase' | 'ping'
+  const [tool, setTool] = useState('view') // 'view' | 'draw' | 'text' | 'erase' | 'markLines'
   const [visibility, setVisibility] = useState('personal') // 'personal' | 'shared'
   const [color, setColor] = useState(COLORS[0])
   const [lineWidth, setLineWidth] = useState(LINE_WIDTHS[1])
@@ -181,70 +183,26 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
     }
   }, [])
 
-  // Groups a page's text items (chord names, lyrics, section labels) into
-  // horizontal bands, one per staff system, so pings can snap to a real
-  // line of the chart instead of landing on an arbitrary point. Coordinates
-  // come out normalized 0..1, matching the annotation coordinate system.
-  //
-  // Sheet music prints a measure number at the left margin at the start of
-  // each staff — that's a far more reliable line boundary than clustering
-  // chord/lyric text by position (which is noisy: chords sit above
-  // arbitrary beats, lyrics wrap unevenly). Falls back to text-clustering
-  // only if no measure numbers are found, for charts engraved without them.
-  const computeLines = async (page, viewport) => {
-    const textContent = await page.getTextContent()
-
-    const items = textContent.items
-      .filter((item) => item.str && item.str.trim().length > 0)
-      .map((item) => {
-        const t = pdfjsLib.Util.transform(viewport.transform, item.transform)
-        const height = Math.hypot(t[2], t[3]) || item.height
-        return { x: t[4], y: t[5], height, str: item.str.trim() }
-      })
-
-    console.log(
-      `[ping-debug] page has ${items.length} text items, width=${Math.round(viewport.width)}:`,
-      items.map((it) => ({ str: it.str, x: Math.round(it.x), y: Math.round(it.y) }))
-    )
-
-    if (items.length === 0) return []
-
-    const contentTop = Math.min(...items.map((it) => it.y - it.height))
-    const contentBottom = Math.max(...items.map((it) => it.y + it.height * 0.3))
-
-    const leftEdge = viewport.width * 0.12
-    const measureLabels = items
-      .filter((it) => /^\d{1,3}$/.test(it.str) && it.x < leftEdge)
-      .sort((a, b) => a.y - b.y)
-
-    let starts
-    if (measureLabels.length >= 2) {
-      starts = measureLabels.map((m) => m.y - m.height)
-    } else {
-      const Y_TOLERANCE_PX = 6
-      starts = []
-      for (const item of [...items].sort((a, b) => a.y - b.y)) {
-        const top = item.y - item.height
-        if (!starts.some((s) => Math.abs(s - top) <= Y_TOLERANCE_PX)) starts.push(top)
-      }
-    }
-
-    if (starts.length === 0 || starts[0] > contentTop + 4) starts.unshift(contentTop)
-
-    return starts.map((y0, i) => ({
-      x0: 0,
-      x1: 1,
-      y0: y0 / viewport.height,
-      y1: (i + 1 < starts.length ? starts[i + 1] : contentBottom) / viewport.height,
+  // Turns the manually-marked line boundaries for a page into full-width
+  // bands: band i spans from marker i's y down to the next marker's y (or
+  // the bottom of the page for the last one). Automatic text-based
+  // detection doesn't work here — this chart's chords/lyrics/measure
+  // numbers are vector shapes or custom-font glyphs, not extractable text —
+  // so a host/editor marks each staff's start once via the Mark Lines tool.
+  const bandsFor = (pageKey) => {
+    const markers = [...(chartLinesRef.current[pageKey] ?? [])].sort((a, b) => a.y - b.y)
+    return markers.map((m, i) => ({
+      y0: m.y,
+      y1: i + 1 < markers.length ? markers[i + 1].y : 1,
     }))
   }
 
   const findNearestLine = (pageKey, pos) => {
-    const lines = pageLinesRef.current[pageKey] ?? []
+    const bands = bandsFor(pageKey)
     let best = -1
     let bestDist = Infinity
-    lines.forEach((line, i) => {
-      const midY = (line.y0 + line.y1) / 2
+    bands.forEach((band, i) => {
+      const midY = (band.y0 + band.y1) / 2
       const dist = Math.abs(pos[1] - midY)
       if (dist < bestDist) {
         bestDist = dist
@@ -254,18 +212,82 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
     return best
   }
 
-  const drawPingLines = (ctx, canvas, pageKey) => {
-    const lines = pageLinesRef.current[pageKey] ?? []
-    const hovered = hoveredLineRef.current[pageKey]
-    lines.forEach((line, i) => {
-      ctx.fillStyle = i === hovered ? 'rgba(255, 180, 0, 0.4)' : 'rgba(0, 140, 255, 0.12)'
-      ctx.fillRect(
-        line.x0 * canvas.width,
-        line.y0 * canvas.height,
-        (line.x1 - line.x0) * canvas.width,
-        (line.y1 - line.y0) * canvas.height
-      )
-    })
+  // Briefly highlights a pinged line for everyone (including the sender),
+  // independent of whatever tool is active.
+  const drawPingFlash = (ctx, canvas, pageKey) => {
+    const flash = pingFlashRef.current[pageKey]
+    if (!flash) return
+    const band = bandsFor(pageKey)[flash.bandIndex]
+    if (!band) return
+    ctx.fillStyle = 'rgba(255, 60, 60, 0.35)'
+    ctx.fillRect(0, band.y0 * canvas.height, canvas.width, (band.y1 - band.y0) * canvas.height)
+  }
+
+  const showPingFlash = (pageKey, bandIndex) => {
+    const existing = pingFlashRef.current[pageKey]
+    if (existing) clearTimeout(existing.timeoutId)
+    const timeoutId = setTimeout(() => {
+      delete pingFlashRef.current[pageKey]
+      redrawPage(pageKey)
+    }, 2500)
+    pingFlashRef.current[pageKey] = { bandIndex, timeoutId }
+    redrawPage(pageKey)
+  }
+
+  const jumpToPageKey = (pageKey) => {
+    const idx = pageOrderRef.current.indexOf(pageKey)
+    if (idx !== -1) setCurrentIndex(idx)
+  }
+
+  const sendPing = (pageKey, bandIndex) => {
+    channelRef.current?.send({ type: 'broadcast', event: 'ping', payload: { pageKey, bandIndex } })
+  }
+
+  const findNearestMarker = (pageKey, y) => {
+    const markers = chartLinesRef.current[pageKey] ?? []
+    return markers.find((m) => Math.abs(m.y - y) < 0.02)
+  }
+
+  const drawMarkers = (ctx, canvas, pageKey) => {
+    for (const m of chartLinesRef.current[pageKey] ?? []) {
+      const y = m.y * canvas.height
+      ctx.strokeStyle = '#e63946'
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.moveTo(0, y)
+      ctx.lineTo(canvas.width, y)
+      ctx.stroke()
+    }
+  }
+
+  const toggleMarker = async (chartId, pageNumber, pageKey, pos) => {
+    const existing = findNearestMarker(pageKey, pos[1])
+
+    if (existing) {
+      chartLinesRef.current[pageKey] = chartLinesRef.current[pageKey].filter((m) => m !== existing)
+      redrawPage(pageKey)
+      const { error: deleteError } = await supabase.from('chart_lines').delete().eq('id', existing.id)
+      if (deleteError) alert(`Could not remove line marker: ${deleteError.message}`)
+      return
+    }
+
+    const optimistic = { y: pos[1] }
+    chartLinesRef.current[pageKey] = [...(chartLinesRef.current[pageKey] ?? []), optimistic]
+    redrawPage(pageKey)
+
+    const { data, error: insertError } = await supabase
+      .from('chart_lines')
+      .insert({ chart_id: chartId, page_number: pageNumber, y_position: pos[1], created_by: currentUserId })
+      .select()
+      .single()
+
+    if (insertError) {
+      alert(`Could not save line marker: ${insertError.message}`)
+      chartLinesRef.current[pageKey] = chartLinesRef.current[pageKey].filter((m) => m !== optimistic)
+      redrawPage(pageKey)
+      return
+    }
+    optimistic.id = data.id
   }
 
   const redrawPage = (pageKey) => {
@@ -276,9 +298,10 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
     for (const ann of annotationsRef.current[pageKey] ?? []) {
       renderAnnotation(ctx, canvas, ann)
     }
-    if (toolRef.current === 'ping') {
-      drawPingLines(ctx, canvas, pageKey)
+    if (toolRef.current === 'markLines') {
+      drawMarkers(ctx, canvas, pageKey)
     }
+    drawPingFlash(ctx, canvas, pageKey)
   }
 
   const renderAnnotation = (ctx, canvas, ann) => {
@@ -366,9 +389,8 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
         return
       }
 
-      if (tool_ === 'ping') {
-        hoveredLineRef.current[pageKey] = findNearestLine(pageKey, pos)
-        redrawPage(pageKey)
+      if (tool_ === 'markLines') {
+        toggleMarker(chartId, pageNumber, pageKey, pos)
         return
       }
 
@@ -383,12 +405,6 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
       if (erasing) {
         const hit = findHit(overlay, pageKey, pos)
         if (hit) eraseAnnotation(pageKey, hit)
-        return
-      }
-
-      if (toolRef.current === 'ping') {
-        hoveredLineRef.current[pageKey] = findNearestLine(pageKey, pos)
-        redrawPage(pageKey)
         return
       }
 
@@ -465,6 +481,36 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
       })
   }
 
+  const loadChartLines = () => {
+    supabase
+      .from('chart_lines')
+      .select('id, chart_id, page_number, y_position')
+      .in('chart_id', charts.map((c) => c.id))
+      .then(({ data }) => {
+        for (const row of data ?? []) {
+          const pageKey = `${row.chart_id}:${row.page_number}`
+          const list = chartLinesRef.current[pageKey]
+          if (list) list.push({ id: row.id, y: row.y_position })
+        }
+        Object.keys(chartLinesRef.current).forEach((k) => redrawPage(k))
+      })
+  }
+
+  // Double-click/double-tap a marked line while in 'view' mode to ping it —
+  // jumps everyone currently looking at this chart to that line, with a
+  // brief highlight flash. Gated to host/editor, like other actions that
+  // affect everyone's view.
+  const attachPing = (canvas, pageKey) => {
+    canvas.addEventListener('dblclick', (e) => {
+      if (toolRef.current !== 'view' || !canDrawShared) return
+      const rect = canvas.getBoundingClientRect()
+      const pos = [(e.clientX - rect.left) / rect.width, (e.clientY - rect.top) / rect.height]
+      const bandIndex = findNearestLine(pageKey, pos)
+      if (bandIndex === -1) return
+      sendPing(pageKey, bandIndex)
+    })
+  }
+
   useEffect(() => {
     let cancelled = false
     const track = trackRef.current
@@ -472,6 +518,8 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
     pageWrappersRef.current = {}
     overlaysRef.current = {}
     annotationsRef.current = {}
+    chartLinesRef.current = {}
+    pageOrderRef.current = []
     currentIndexRef.current = 0
     setCurrentIndex(0)
 
@@ -516,8 +564,10 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
         pageWrappersRef.current[pageKey] = pageWrapper
         overlaysRef.current[pageKey] = overlay
         annotationsRef.current[pageKey] = []
-        pageLinesRef.current[pageKey] = await computeLines(page, viewport)
+        chartLinesRef.current[pageKey] = []
+        pageOrderRef.current.push(pageKey)
         attachDrawing(overlay, chart.id, pageNumber, pageKey)
+        attachPing(canvas, pageKey)
         numPagesRef.current += 1
         setNumPages(numPagesRef.current)
       }
@@ -533,6 +583,7 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
       if (!cancelled) {
         layoutPages()
         loadAnnotations()
+        loadChartLines()
       }
     })().catch((err) => setError(err.message))
 
@@ -572,10 +623,17 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
           }
         }
       )
+      .on('broadcast', { event: 'ping' }, ({ payload }) => {
+        jumpToPageKey(payload.pageKey)
+        showPingFlash(payload.pageKey, payload.bandIndex)
+      })
       .subscribe()
+
+    channelRef.current = channel
 
     return () => {
       supabase.removeChannel(channel)
+      channelRef.current = null
     }
   }, [chartsKey, currentUserId])
 
@@ -620,17 +678,24 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
         <button onClick={() => setTool('erase')} disabled={tool === 'erase'}>
           Erase
         </button>{' '}
-        <button onClick={() => setTool('ping')} disabled={tool === 'ping'}>
-          Ping (testing)
-        </button>{' '}
+        {canDrawShared && (
+          <button onClick={() => setTool('markLines')} disabled={tool === 'markLines'}>
+            Mark Lines
+          </button>
+        )}{' '}
         {!fullscreen && <button onClick={() => setFullscreen(true)}>Expand</button>}
       </div>
 
-      {tool === 'ping' && (
+      {tool === 'markLines' && (
         <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: '#666' }}>
-          Detected lines are highlighted in blue — tap one to check it lines up with a real
-          chord/lyric row. This is just checking the detection works; pinging to other people
-          isn't wired up yet.
+          Tap the start of each staff/line to mark it (tap an existing mark to remove it). Once
+          marked, switch to View and double-click/double-tap a line to ping everyone currently
+          viewing this chart to that spot.
+        </p>
+      )}
+      {canDrawShared && tool === 'view' && (
+        <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: '#666' }}>
+          Double-click/double-tap a marked line to ping everyone viewing this chart.
         </p>
       )}
 
