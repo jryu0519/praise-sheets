@@ -129,14 +129,17 @@ concrete style than the very first (lavender/black/lime) reference shared
   (2% of page dimension) are silently ignored rather than saved as junk.
   No realtime sync on this table — it's rare, low-urgency setup, not live
   editing.
-- **The actual root cause of "pinging doesn't work" (found 2026-08-30):**
-  Supabase Realtime broadcast messages don't echo back to the sender by
-  default — so double-clicking a section never produced any visible
-  feedback on the sender's *own* screen, which is how this was being
-  tested (solo, one browser). Fixed by passing
-  `{ config: { broadcast: { self: true } } }` to `supabase.channel(...)`.
-  This was likely the actual reason earlier attempts "didn't work" too,
-  not the marking mechanism itself.
+- **Root cause of "pinging doesn't work" (found 2026-08-30):** Supabase
+  Realtime broadcasts don't echo back to the sender by default, so
+  double-clicking a section never produced visible feedback on the
+  sender's *own* screen — and testing was solo, one browser. First fix
+  attempt was `{ config: { broadcast: { self: true } } }`, but that
+  proved unreliable for the sender's own feedback in practice. Replaced
+  with the more robust approach: `sendPing()` now calls `showPingFlash()`
+  and `addNotification()` directly/optimistically for the sender, the same
+  pattern used everywhere else in this file (annotations, sections), and
+  separately broadcasts to everyone else — not dependent on any echo
+  config or round-trip back to yourself.
 - **Erase Sections is now a dedicated tool**, not an overloaded tap-vs-drag
   gesture inside Mark Sections (the old approach used a very tight 1%
   movement threshold to distinguish "tap to remove" from "drag to create,"
