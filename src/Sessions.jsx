@@ -24,6 +24,18 @@ function Sessions({ currentUserId, canManage }) {
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
   const [addChartIds, setAddChartIds] = useState([])
+  const [personalParts, setPersonalParts] = useState({}) // chart_id -> { id, storage_path }
+
+  const loadPersonalParts = () => {
+    supabase
+      .from('chart_personal_parts')
+      .select('id, chart_id, storage_path')
+      .then(({ data }) => {
+        const byChart = {}
+        for (const row of data ?? []) byChart[row.chart_id] = row
+        setPersonalParts(byChart)
+      })
+  }
 
   const loadSessions = () => {
     supabase
@@ -44,6 +56,7 @@ function Sessions({ currentUserId, canManage }) {
   useEffect(() => {
     loadSessions()
     loadAvailableCharts()
+    loadPersonalParts()
   }, [])
 
   const toggleChart = (chartId) => {
@@ -92,7 +105,18 @@ function Sessions({ currentUserId, canManage }) {
       alert(`Could not open file: ${error.message}`)
       return
     }
-    setViewing({ charts: [{ id: chart.id, title: chart.title, url: data.signedUrl }] })
+
+    let personalPart = null
+    const part = personalParts[chart.id]
+    if (part) {
+      const { data: partData, error: partError } = await supabase.storage
+        .from('personal_parts')
+        .createSignedUrl(part.storage_path, 300)
+      if (partError) alert(`Could not open your personal part: ${partError.message}`)
+      else personalPart = { url: partData.signedUrl }
+    }
+
+    setViewing({ charts: [{ id: chart.id, title: chart.title, url: data.signedUrl }], personalPart })
   }
 
   const openCombined = async (session) => {
@@ -397,6 +421,7 @@ function Sessions({ currentUserId, canManage }) {
       {viewing && (
         <PdfViewer
           charts={viewing.charts}
+          personalPart={viewing.personalPart}
           currentUserId={currentUserId}
           canDrawShared={canManage}
           onClose={() => setViewing(null)}

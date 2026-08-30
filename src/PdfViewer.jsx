@@ -27,8 +27,17 @@ const SWIPE_THRESHOLD_RATIO = 0.2
 // continuously page-turning view. A page "slot" is keyed by
 // `${chartId}:${pageNumber}` throughout, since the same page_number can
 // occur in more than one chart.
-function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
+//
+// `personalPart` is an optional { url } — a viewer's own private reference
+// PDF (e.g. a pianist's piano part), appended as extra page(s) after the
+// real charts' own pages. It's deliberately outside the chart/annotation
+// system entirely: not included in `chartsKey`, the realtime channel, or
+// annotation/section loading, so two people viewing "the same" chart still
+// share the same channel and data even if only one of them has a personal
+// part attached. Its pages get no drawing/marking/pinging — pure viewing.
+function PdfViewer({ charts, personalPart, currentUserId, canDrawShared, onClose }) {
   const chartsKey = charts.map((c) => c.id).join(',')
+  const personalPartKey = personalPart?.url ?? ''
 
   const viewportRef = useRef(null) // outer, overflow-hidden window onto the track
   const trackRef = useRef(null) // horizontal flex strip holding every page slot
@@ -666,52 +675,73 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
     currentIndexRef.current = 0
     setCurrentIndex(0)
 
+    // Renders one PDF page into a wrapper/canvas/overlay and registers it
+    // as a page slot. Returns the overlay so the caller can decide whether
+    // to wire up drawing/marking on it (real chart pages) or leave it
+    // inert (a personal part's pure-viewing pages).
+    const renderPageSlot = async (pageKey, page, viewport) => {
+      if (!pageAspectRef.current || pageAspectRef.current === 1.3) {
+        pageAspectRef.current = viewport.height / viewport.width
+      }
+
+      const pageWrapper = document.createElement('div')
+      pageWrapper.style.position = 'relative'
+      pageWrapper.style.flex = '0 0 auto'
+
+      const canvas = document.createElement('canvas')
+      canvas.width = viewport.width
+      canvas.height = viewport.height
+      canvas.style.display = 'block'
+      canvas.style.width = '100%'
+
+      const overlay = document.createElement('canvas')
+      overlay.width = viewport.width
+      overlay.height = viewport.height
+      overlay.style.position = 'absolute'
+      overlay.style.top = '0'
+      overlay.style.left = '0'
+      overlay.style.width = '100%'
+      overlay.style.height = '100%'
+      overlay.style.pointerEvents = toolRef.current === 'view' ? 'none' : 'auto'
+
+      pageWrapper.appendChild(canvas)
+      pageWrapper.appendChild(overlay)
+      track.appendChild(pageWrapper)
+
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise
+      if (cancelled) return null
+
+      pageWrappersRef.current[pageKey] = pageWrapper
+      overlaysRef.current[pageKey] = overlay
+      pageOrderRef.current.push(pageKey)
+      numPagesRef.current += 1
+      setNumPages(numPagesRef.current)
+      return overlay
+    }
+
     const buildChart = async (chart) => {
       const pdf = await pdfjsLib.getDocument({ url: chart.url }).promise
       for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
         if (cancelled) return
         const page = await pdf.getPage(pageNumber)
         const viewport = page.getViewport({ scale: 1.5 })
-        if (!pageAspectRef.current || pageAspectRef.current === 1.3) {
-          pageAspectRef.current = viewport.height / viewport.width
-        }
-
         const pageKey = `${chart.id}:${pageNumber}`
-        const pageWrapper = document.createElement('div')
-        pageWrapper.style.position = 'relative'
-        pageWrapper.style.flex = '0 0 auto'
 
-        const canvas = document.createElement('canvas')
-        canvas.width = viewport.width
-        canvas.height = viewport.height
-        canvas.style.display = 'block'
-        canvas.style.width = '100%'
-
-        const overlay = document.createElement('canvas')
-        overlay.width = viewport.width
-        overlay.height = viewport.height
-        overlay.style.position = 'absolute'
-        overlay.style.top = '0'
-        overlay.style.left = '0'
-        overlay.style.width = '100%'
-        overlay.style.height = '100%'
-        overlay.style.pointerEvents = toolRef.current === 'view' ? 'none' : 'auto'
-
-        pageWrapper.appendChild(canvas)
-        pageWrapper.appendChild(overlay)
-        track.appendChild(pageWrapper)
-
-        await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise
-        if (cancelled) return
-
-        pageWrappersRef.current[pageKey] = pageWrapper
-        overlaysRef.current[pageKey] = overlay
         annotationsRef.current[pageKey] = []
         chartSectionsRef.current[pageKey] = []
-        pageOrderRef.current.push(pageKey)
+        const overlay = await renderPageSlot(pageKey, page, viewport)
+        if (!overlay) return
         attachDrawing(overlay, chart.id, pageNumber, pageKey)
-        numPagesRef.current += 1
-        setNumPages(numPagesRef.current)
+      }
+    }
+
+    const buildPersonalPart = async () => {
+      const pdf = await pdfjsLib.getDocument({ url: personalPart.url }).promise
+      for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+        if (cancelled) return
+        const page = await pdf.getPage(pageNumber)
+        const viewport = page.getViewport({ scale: 1.5 })
+        await renderPageSlot(`personal:${pageNumber}`, page, viewport)
       }
     }
 
@@ -721,6 +751,9 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
       for (const chart of charts) {
         if (cancelled) return
         await buildChart(chart)
+      }
+      if (personalPart && !cancelled) {
+        await buildPersonalPart()
       }
       if (!cancelled) {
         layoutPages()
@@ -732,7 +765,7 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
     return () => {
       cancelled = true
     }
-  }, [chartsKey])
+  }, [chartsKey, personalPartKey])
 
   useEffect(() => {
     const chartIds = charts.map((c) => c.id)

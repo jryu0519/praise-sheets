@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from './supabaseClient'
 import PdfViewer from './PdfViewer'
 import { colors, buttonStyle, primaryButtonStyle, dangerButtonStyle, inputStyle, iconButtonStyle } from './theme'
-import { RefreshIcon, DocumentIcon, CheckIcon, PencilIcon } from './icons'
+import { RefreshIcon, DocumentIcon, CheckIcon, PencilIcon, MusicNoteIcon } from './icons'
 
 const sortCharts = (charts, sortBy) => {
   const sorted = [...charts]
@@ -35,6 +35,10 @@ function Charts({ currentUserId, canManage, isHost }) {
   const [editingId, setEditingId] = useState(null)
   const [editTitle, setEditTitle] = useState('')
   const [editArtist, setEditArtist] = useState('')
+  const [personalParts, setPersonalParts] = useState({}) // chart_id -> { id, storage_path }
+  const [managingPartFor, setManagingPartFor] = useState(null)
+  const [partFile, setPartFile] = useState(null)
+  const [partUploading, setPartUploading] = useState(false)
 
   const loadCharts = () => {
     supabase
@@ -43,8 +47,20 @@ function Charts({ currentUserId, canManage, isHost }) {
       .then(({ data }) => setCharts(data ?? []))
   }
 
+  const loadPersonalParts = () => {
+    supabase
+      .from('chart_personal_parts')
+      .select('id, chart_id, storage_path')
+      .then(({ data }) => {
+        const byChart = {}
+        for (const row of data ?? []) byChart[row.chart_id] = row
+        setPersonalParts(byChart)
+      })
+  }
+
   useEffect(() => {
     loadCharts()
+    loadPersonalParts()
   }, [])
 
   const uploadChart = async () => {
@@ -92,7 +108,61 @@ function Charts({ currentUserId, canManage, isHost }) {
       alert(`Could not open file: ${error.message}`)
       return
     }
-    setViewing({ id: chart.id, title: chart.title, url: data.signedUrl })
+
+    let personalPart = null
+    const part = personalParts[chart.id]
+    if (part) {
+      const { data: partData, error: partError } = await supabase.storage
+        .from('personal_parts')
+        .createSignedUrl(part.storage_path, 300)
+      if (partError) alert(`Could not open your personal part: ${partError.message}`)
+      else personalPart = { url: partData.signedUrl }
+    }
+
+    setViewing({ id: chart.id, title: chart.title, url: data.signedUrl, personalPart })
+  }
+
+  const uploadPersonalPart = async (chart) => {
+    if (!partFile) return
+    setPartUploading(true)
+
+    const extension = partFile.name.includes('.') ? partFile.name.slice(partFile.name.lastIndexOf('.')) : ''
+    const storagePath = `${currentUserId}/${crypto.randomUUID()}${extension}`
+    const { error: uploadError } = await supabase.storage.from('personal_parts').upload(storagePath, partFile)
+
+    if (uploadError) {
+      alert(`Could not upload file: ${uploadError.message}`)
+      setPartUploading(false)
+      return
+    }
+
+    const existing = personalParts[chart.id]
+    if (existing) await supabase.storage.from('personal_parts').remove([existing.storage_path])
+
+    const { error: upsertError } = await supabase
+      .from('chart_personal_parts')
+      .upsert({ chart_id: chart.id, user_id: currentUserId, storage_path: storagePath }, { onConflict: 'chart_id,user_id' })
+
+    if (upsertError) {
+      alert(`Could not save your part: ${upsertError.message}`)
+    } else {
+      setPartFile(null)
+      setManagingPartFor(null)
+      loadPersonalParts()
+    }
+    setPartUploading(false)
+  }
+
+  const removePersonalPart = async (chart) => {
+    const part = personalParts[chart.id]
+    if (!part) return
+    const { error } = await supabase.from('chart_personal_parts').delete().eq('id', part.id)
+    if (error) {
+      alert(`Could not remove your part: ${error.message}`)
+      return
+    }
+    await supabase.storage.from('personal_parts').remove([part.storage_path])
+    loadPersonalParts()
   }
 
   const toggleReady = async (chart) => {
@@ -251,6 +321,13 @@ function Charts({ currentUserId, canManage, isHost }) {
                   <button onClick={() => viewChart(c)} title="View" style={iconButtonStyle(false)}>
                     <DocumentIcon />
                   </button>
+                  <button
+                    onClick={() => setManagingPartFor(managingPartFor === c.id ? null : c.id)}
+                    title="My part (e.g. piano)"
+                    style={iconButtonStyle(!!personalParts[c.id], colors.accent, colors.accentBg)}
+                  >
+                    <MusicNoteIcon />
+                  </button>
                   {isHost && (
                     <>
                       <button onClick={() => startEdit(c)} title="Edit title/artist" style={iconButtonStyle(false)}>
@@ -264,6 +341,37 @@ function Charts({ currentUserId, canManage, isHost }) {
                         <CheckIcon />
                       </button>
                     </>
+                  )}
+                </div>
+              </div>
+            )}
+            {managingPartFor === c.id && (
+              <div style={{ marginTop: '0.6rem', paddingTop: '0.6rem', borderTop: `1px solid ${colors.border}` }}>
+                <p style={{ margin: '0 0 0.5rem', fontSize: '0.8rem', color: colors.subtext }}>
+                  Your own extra page for this song (e.g. a piano part) — private to you, shown as
+                  page 2 after the regular chart when you view it.
+                </p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
+                  <input
+                    id={`part-file-input-${c.id}`}
+                    type="file"
+                    accept="application/pdf"
+                    onChange={(e) => setPartFile(e.target.files[0] ?? null)}
+                    style={{ display: 'none' }}
+                  />
+                  <label htmlFor={`part-file-input-${c.id}`} style={{ ...buttonStyle, display: 'inline-block', cursor: 'pointer' }}>
+                    Choose File
+                  </label>
+                  <span style={{ color: colors.subtext, fontSize: '0.85rem' }}>
+                    {partFile ? partFile.name : 'No file chosen'}
+                  </span>
+                  <button onClick={() => uploadPersonalPart(c)} disabled={partUploading} style={primaryButtonStyle}>
+                    {partUploading ? 'Uploading...' : personalParts[c.id] ? 'Replace' : 'Upload'}
+                  </button>
+                  {personalParts[c.id] && (
+                    <button onClick={() => removePersonalPart(c)} style={dangerButtonStyle}>
+                      Remove
+                    </button>
                   )}
                 </div>
               </div>
@@ -290,7 +398,8 @@ function Charts({ currentUserId, canManage, isHost }) {
 
       {viewing && (
         <PdfViewer
-          charts={[viewing]}
+          charts={[{ id: viewing.id, title: viewing.title, url: viewing.url }]}
+          personalPart={viewing.personalPart}
           currentUserId={currentUserId}
           canDrawShared={canManage}
           onClose={() => setViewing(null)}
