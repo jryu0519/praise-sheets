@@ -19,9 +19,9 @@ That's the design direction actually in use now — a different, more
 concrete style than the very first (lavender/black/lime) reference shared
 2026-08-29, which is superseded by this one.
 
-- Palette, button/input styles, and a couple of small inline SVG icons
-  (refresh, document, checkmark) live in `src/theme.js` — import from
-  there rather than re-declaring colors per-component.
+- Palette and button/input styles live in `src/theme.js`; inline SVG icons
+  (refresh, document, checkmark, pencil, chevrons, play) live in
+  `src/icons.jsx` — import from there rather than re-declaring per-component.
 - Dark background (`colors.bg` #0d0d0f), card surfaces (`colors.card`
   #1c1c1f) for grouped content, a single blue accent (`colors.accent`
   #3b82f6) for key badges/primary actions, green (`colors.ready`) reserved
@@ -37,6 +37,16 @@ concrete style than the very first (lavender/black/lime) reference shared
   in favor of the app's own explicit theme.
 - App title (in `Charts.jsx`) is "Pri Music Sheet List" (with the space —
   user corrected this from "Sheetlist" on 2026-08-30).
+- `Sessions.jsx` got the same treatment as the song list: centered "Sessions"
+  title, session-count pill + refresh, card rows with a chevron. The detail
+  view leads with a full-width "View All (Combined)" button and numbered
+  song rows (no drag-reorder yet, per the earlier note — numbers are just
+  the check-order from creation, not draggable).
+- Fixed a layout bug: the fixed-position "☰ Menu" button was overlapping
+  page titles on narrow screens. `App.jsx`'s content wrapper now has
+  `paddingTop: '4.5rem'` to clear it, and each page's `<h1>` is centered
+  with `margin: '0 auto'` on a `maxWidth` wrapper (not just centered text
+  inside a left-aligned column).
 
 ## Phase status
 
