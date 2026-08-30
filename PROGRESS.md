@@ -24,25 +24,30 @@ React + Vite (JavaScript) · Supabase (auth, Postgres, storage, realtime) · PDF
       (host/editor only) vs. personal visibility; erase (whole-annotation,
       own-only, matching RLS); realtime sync via `postgres_changes` so
       finished edits appear for everyone without a reload
-- [ ] **Two-page swipeable viewer** ← START HERE NEXT (not phase-numbered —
-      a viewer UX request, see design notes below)
-- [ ] Phase 5 — Real-time pings (see design notes below — scope is bigger than
-      a plain coordinate ping)
+- [x] **Two-page swipeable viewer** (not phase-numbered — a viewer UX
+      request): `PdfViewer.jsx` renders pages into a horizontal swipeable
+      track instead of a vertical stack — 2 pages side by side above 640px
+      width, 1 page below it, sliding one page per swipe (1-2, 2-3, 3-4...);
+      Prev/Next buttons and a page counter; plus a fullscreen toggle (Expand
+      / "Back to regular size", bottom-right) for small phone screens
+- [ ] Phase 5 — Real-time pings ← START HERE NEXT (see design notes below —
+      scope is bigger than a plain coordinate ping)
 - [ ] Phase 6 — Roles + host handoff refinements
 - [ ] Phase 7 — PWA (installable)
 
-## Next concrete step (two-page swipeable viewer)
+## Viewer UX build notes (two-page pager + fullscreen)
 
-Not started. Per user (2026-08-29): `PdfViewer.jsx` currently stacks every
-page vertically in one scrollable column — replace this with a book-like
-pager:
-- On tablet/desktop widths, show two pages side by side; on narrow (phone)
-  widths, fall back to one page at a time — same swipe mechanism either way
-- Swiping advances **one page at a time**, always showing "current + next"
-  as a sliding pair (1-2, then 2-3, then 3-4 — never jumps in fixed
-  non-overlapping spreads like a physical book)
-- Needs touch/pointer swipe-gesture handling; annotation overlays and
-  realtime sync logic should carry over unchanged per visible page number
+- Page layout math lives in `layoutPages()` in `PdfViewer.jsx`: slot width is
+  `min(viewport width / pagesPerView, maxHeight / pageAspect)`, so pages
+  always fit both the available width and height — pageAspect is taken from
+  the first rendered page only (assumes uniform page size across a chart).
+- Swipe/drag is only active in the 'view' tool — drawing tools capture the
+  pointer on their own per-page overlay instead, so there's no conflict
+  between turning pages and drawing on one.
+- Fullscreen is a CSS-only fixed-position overlay (`position: fixed; inset:
+  0`), not the browser's native Fullscreen API — iOS Safari doesn't support
+  `requestFullscreen()` on arbitrary elements, so this approach works
+  consistently across phones.
 
 ## Phase 4 build notes
 
