@@ -11,20 +11,32 @@ file is the quick-resume summary.
 ## Stack
 React + Vite (JavaScript) · Supabase (auth, Postgres, storage, realtime) · PDF.js · vite-plugin-pwa · Vercel
 
-## Design direction (for later — functionality first, per user)
+## Design system (UI/UX polish — now underway, started 2026-08-30)
 
-User shared a reference image (2026-08-29) of the visual style to aim for
-once we get to UI/UX polish, not before. Key elements to carry over:
-- Soft lavender/purple background behind the app chrome
-- High-contrast black cards/panels for primary content, off-white/cream
-  for secondary surfaces
-- A single punchy accent color (yellow-green/lime) used sparingly for
-  highlights and callouts
-- Bold, rounded sans-serif typography, fairly large type for headings
-- Big, chunky, fully-rounded black buttons for primary actions ("Get
-  Started" style)
-- Dashboard-style cards presenting a few key stats/values prominently
-- Generally a modern fintech-app aesthetic, not a plain document/form look
+Originally deferred to "later," but the user started this early by sharing
+a reference image of a dark "Set List" app screen and asking to match it.
+That's the design direction actually in use now — a different, more
+concrete style than the very first (lavender/black/lime) reference shared
+2026-08-29, which is superseded by this one.
+
+- Palette, button/input styles, and a couple of small inline SVG icons
+  (refresh, document, checkmark) live in `src/theme.js` — import from
+  there rather than re-declaring colors per-component.
+- Dark background (`colors.bg` #0d0d0f), card surfaces (`colors.card`
+  #1c1c1f) for grouped content, a single blue accent (`colors.accent`
+  #3b82f6) for key badges/primary actions, green (`colors.ready`) reserved
+  for the "ready for this week" checkmark specifically.
+- Applied across the whole app: `App.jsx` (nav menu, account footer,
+  sign-in screen), `Charts.jsx`, `Team.jsx`, `Sessions.jsx`, and
+  `PdfViewer.jsx`'s toolbar chrome (not the PDF canvas itself, which
+  renders the document as-is).
+- Removed leftover Vite scaffold cruft that was fighting the theme:
+  `App.css` was entirely unused (never imported) and deleted; `index.css`
+  had rules capping width at 1126px with side borders, forcing centered
+  text, and switching palette by OS `prefers-color-scheme` — all removed
+  in favor of the app's own explicit theme.
+- App title (in `Charts.jsx`) is "Pri Music Sheet List" (with the space —
+  user corrected this from "Sheetlist" on 2026-08-30).
 
 ## Phase status
 
