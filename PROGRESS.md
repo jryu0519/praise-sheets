@@ -90,18 +90,24 @@ concrete style than the very first (lavender/black/lime) reference shared
       swipeable pager — `PdfViewer.jsx` now takes a `charts: [{id, url}]`
       list instead of a single chart, with pages keyed by `chartId:pageNumber`
       so annotations and realtime sync work correctly across chart boundaries
-- [ ] **Phase 5 — Real-time pings** ← IN PROGRESS. Root cause of "pinging
-      doesn't work" found and fixed 2026-08-30 (see build notes) — sender
-      now sees their own ping too, sections have a dedicated Erase tool,
-      and pings show a dismissible notification instead of force-navigating
-      everyone. Marking/erasing/local-flash all verified working; the
-      actual cross-device broadcast still needs a real two-session test
-      (Claude cannot sign in to confirm this part).
+- [x] **Phase 5 — Real-time pings**: user confirmed satisfied 2026-08-30
+      after the layout/self-feedback/mouse-click fixes (see build notes).
+      Sections are drag-selected regions, marked/erased via dedicated
+      tools; double-click/double-tap in View mode broadcasts a ping —
+      5s amber outline flash + a dismissible notification (max 4 shown,
+      oldest dropped) naming the chart, click-to-jump. True cross-device
+      delivery was never directly verified by Claude (can't sign in to
+      test with two sessions), but the sender-side mechanics are solid and
+      the user has moved on, so treating this as done for now.
 - [x] **Host-only chart archive/delete**: hosts can archive (reversible,
       hidden from the default list, `charts.archived`) or permanently
       delete a chart; both are host-only at the RLS level (not just a
       hidden button) — editors can still upload but not remove
-- [ ] Phase 6 — Roles + host handoff refinements
+- [ ] Phase 6 — Roles + host handoff refinements ← START HERE NEXT (not yet
+      scoped — "Team.jsx" today only has: change role dropdown, an
+      unconfirmed one-click "Make host" transfer, and invite-by-email; no
+      way to remove a member or see/cancel a pending invite. Ask the user
+      what specifically needs refining before building.)
 - [ ] Phase 7 — PWA (installable)
 
 ## Phase 5 build notes (pings)
