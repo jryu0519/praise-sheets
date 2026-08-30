@@ -29,7 +29,9 @@ function PdfViewer({ url, chartId, currentUserId, canDrawShared, onClose }) {
   const pagesPerViewRef = useRef(2)
   const slotWidthRef = useRef(0)
   const pageAspectRef = useRef(1.3) // page height / width, from the first rendered page
+  const fullscreenRef = useRef(false)
   const [error, setError] = useState(null)
+  const [fullscreen, setFullscreen] = useState(false)
   const [tool, setTool] = useState('view') // 'view' | 'draw' | 'text' | 'erase'
   const [visibility, setVisibility] = useState('personal') // 'personal' | 'shared'
   const [color, setColor] = useState(COLORS[0])
@@ -78,7 +80,7 @@ function PdfViewer({ url, chartId, currentUserId, canDrawShared, onClose }) {
     if (!viewport) return
     const viewportWidth = viewport.clientWidth
     const perView = viewportWidth >= TWO_PAGE_MIN_WIDTH ? 2 : 1
-    const maxHeight = window.innerHeight * 0.7
+    const maxHeight = window.innerHeight * (fullscreenRef.current ? 0.85 : 0.7)
 
     const widthConstrained = viewportWidth / perView
     const heightConstrained = maxHeight / pageAspectRef.current
@@ -103,6 +105,20 @@ function PdfViewer({ url, chartId, currentUserId, canDrawShared, onClose }) {
   useEffect(() => {
     window.addEventListener('resize', layoutPages)
     return () => window.removeEventListener('resize', layoutPages)
+  }, [])
+
+  useEffect(() => {
+    fullscreenRef.current = fullscreen
+    document.body.style.overflow = fullscreen ? 'hidden' : ''
+    // wait a frame so the container has its new size before measuring it
+    const id = requestAnimationFrame(layoutPages)
+    return () => cancelAnimationFrame(id)
+  }, [fullscreen])
+
+  useEffect(() => {
+    return () => {
+      document.body.style.overflow = ''
+    }
   }, [])
 
   // Swipe/drag to turn pages, one page at a time. Only active in 'view' —
@@ -441,7 +457,29 @@ function PdfViewer({ url, chartId, currentUserId, canDrawShared, onClose }) {
   const goNext = () => setCurrentIndex((i) => Math.min(Math.max(numPages - 1, 0), i + 1))
 
   return (
-    <div style={{ marginTop: '1rem', border: '1px solid #ccc', padding: '1rem' }}>
+    <div
+      style={
+        fullscreen
+          ? {
+              position: 'fixed',
+              inset: 0,
+              zIndex: 1000,
+              background: 'white',
+              padding: '1rem',
+              overflowY: 'auto',
+            }
+          : { marginTop: '1rem', border: '1px solid #ccc', padding: '1rem' }
+      }
+    >
+      {fullscreen && (
+        <button
+          onClick={() => setFullscreen(false)}
+          style={{ position: 'absolute', top: '0.5rem', right: '0.5rem' }}
+        >
+          Back to regular size
+        </button>
+      )}
+
       <div>
         <button onClick={onClose}>Close</button>{' '}
         <button onClick={() => setTool('view')} disabled={tool === 'view'}>
@@ -455,7 +493,8 @@ function PdfViewer({ url, chartId, currentUserId, canDrawShared, onClose }) {
         </button>{' '}
         <button onClick={() => setTool('erase')} disabled={tool === 'erase'}>
           Erase
-        </button>
+        </button>{' '}
+        {!fullscreen && <button onClick={() => setFullscreen(true)}>Expand</button>}
       </div>
 
       {(tool === 'draw' || tool === 'text') && (
