@@ -90,14 +90,13 @@ concrete style than the very first (lavender/black/lime) reference shared
       swipeable pager — `PdfViewer.jsx` now takes a `charts: [{id, url}]`
       list instead of a single chart, with pages keyed by `chartId:pageNumber`
       so annotations and realtime sync work correctly across chart boundaries
-- [ ] **Phase 5 — Real-time pings** ← IN PROGRESS, NOT YET CONFIRMED WORKING.
-      Current design (2026-08-30): host/editor drag-selects rectangular
-      sections on a chart page (`chart_sections` table), like a screenshot
-      tool; double-clicking/double-tapping a marked section in View mode
-      broadcasts a ping (Supabase Realtime `broadcast`, not a stored row)
-      that jumps everyone currently viewing that chart to the same section
-      and flashes it briefly. Two earlier approaches were tried and
-      abandoned first — see build notes below.
+- [ ] **Phase 5 — Real-time pings** ← IN PROGRESS. Root cause of "pinging
+      doesn't work" found and fixed 2026-08-30 (see build notes) — sender
+      now sees their own ping too, sections have a dedicated Erase tool,
+      and pings show a dismissible notification instead of force-navigating
+      everyone. Marking/erasing/local-flash all verified working; the
+      actual cross-device broadcast still needs a real two-session test
+      (Claude cannot sign in to confirm this part).
 - [x] **Host-only chart archive/delete**: hosts can archive (reversible,
       hidden from the default list, `charts.archived`) or permanently
       delete a chart; both are host-only at the RLS level (not just a
@@ -121,22 +120,39 @@ concrete style than the very first (lavender/black/lime) reference shared
   trigger, or the cross-user broadcast — never root-caused, since the user
   moved straight to requesting a different marking UX). `chart_lines` was
   dropped in migration `009_chart_sections.sql` rather than kept around.
-- **Attempt 3 — drag-selected rectangular sections (current)**:
-  `chart_sections` (chart_id, page_number, x0/y0/x1/y1 normalized 0..1,
-  created_by) stores one row per section, managed by host/editor via a
-  "Mark Sections" tool in `PdfViewer.jsx` — drag to select a region (like
-  a screenshot tool), tap an existing section to remove it. New sections
-  are rejected client-side if they overlap an existing one on that page
-  (`rectsOverlap`). No realtime sync on this table — it's rare, low-urgency
-  setup, not live editing. **Not yet confirmed working end-to-end** —
-  next session should verify marking, then the double-click ping itself,
-  then the actual cross-user broadcast (needs two separate signed-in
-  sessions/devices to test, since Claude can't sign in to verify this).
-- **Pinging is a realtime `broadcast` event, not a database row** — there's
-  no ping history, just a transient `{pageKey, sectionIndex}` message on
-  the same channel already used for annotation `postgres_changes`. On
-  receipt, every viewer (including the sender) jumps to that page/section
-  and shows a 2.5s highlight flash, independent of whatever tool is active.
+- **Attempt 3 — drag-selected rectangular sections**: `chart_sections`
+  (chart_id, page_number, x0/y0/x1/y1 normalized 0..1, created_by) stores
+  one row per section, managed by host/editor via a "Mark Sections" tool
+  in `PdfViewer.jsx` — drag to select a region (like a screenshot tool).
+  New sections are rejected client-side if they overlap an existing one
+  on that page (`rectsOverlap`); drags smaller than `MIN_SECTION_SIZE`
+  (2% of page dimension) are silently ignored rather than saved as junk.
+  No realtime sync on this table — it's rare, low-urgency setup, not live
+  editing.
+- **The actual root cause of "pinging doesn't work" (found 2026-08-30):**
+  Supabase Realtime broadcast messages don't echo back to the sender by
+  default — so double-clicking a section never produced any visible
+  feedback on the sender's *own* screen, which is how this was being
+  tested (solo, one browser). Fixed by passing
+  `{ config: { broadcast: { self: true } } }` to `supabase.channel(...)`.
+  This was likely the actual reason earlier attempts "didn't work" too,
+  not the marking mechanism itself.
+- **Erase Sections is now a dedicated tool**, not an overloaded tap-vs-drag
+  gesture inside Mark Sections (the old approach used a very tight 1%
+  movement threshold to distinguish "tap to remove" from "drag to create,"
+  which was fragile — natural tap jitter, especially on touch, could easily
+  exceed it and silently create a tiny junk section instead of removing
+  the intended one). Erase Sections just hit-tests on tap, no ambiguity.
+- **Ping feedback redesigned**: the flash changed from a filled overlay to
+  a 5-second outline-only rectangle in a new `colors.ping` amber
+  (`#f59e0b`), so the section's contents stay fully readable underneath.
+  Pings no longer force-navigate every viewer's page the instant they
+  fire — instead each viewer (including the sender) gets a dismissible
+  notification card (top-right, auto-expires after 8s) naming the pinged
+  chart; clicking it jumps to that exact section and re-triggers the
+  flash. This was a deliberate change from the original "everyone gets
+  yanked to the ping immediately" behavior, which the user found too
+  disruptive once actually described in detail.
 - Ping-sending is gated to `canDrawShared` (host/editor) client-side only —
   there's no RLS equivalent for ephemeral broadcast messages, so a
   determined member could technically bypass it. Judged acceptable for a
