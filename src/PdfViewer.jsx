@@ -26,6 +26,8 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
   const pageWrappersRef = useRef({}) // pageKey -> wrapper div (sized as a slot)
   const overlaysRef = useRef({}) // pageKey -> overlay canvas element
   const annotationsRef = useRef({}) // pageKey -> array of annotation rows (with id)
+  const pageLinesRef = useRef({}) // pageKey -> detected text lines (normalized bands), for pinging
+  const hoveredLineRef = useRef({}) // pageKey -> index into pageLinesRef.current[pageKey]
   const toolRef = useRef('view')
   const visibilityRef = useRef('personal')
   const colorRef = useRef(COLORS[0])
@@ -39,7 +41,7 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
   const fullscreenRef = useRef(false)
   const [error, setError] = useState(null)
   const [fullscreen, setFullscreen] = useState(false)
-  const [tool, setTool] = useState('view') // 'view' | 'draw' | 'text' | 'erase'
+  const [tool, setTool] = useState('view') // 'view' | 'draw' | 'text' | 'erase' | 'ping'
   const [visibility, setVisibility] = useState('personal') // 'personal' | 'shared'
   const [color, setColor] = useState(COLORS[0])
   const [lineWidth, setLineWidth] = useState(LINE_WIDTHS[1])
@@ -53,6 +55,8 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
       overlay.style.pointerEvents = tool === 'view' ? 'none' : 'auto'
       overlay.style.touchAction = tool === 'view' ? 'auto' : 'none'
     })
+    // toggles the ping-line bands on/off when entering or leaving that tool
+    Object.keys(overlaysRef.current).forEach((pageKey) => redrawPage(pageKey))
   }, [tool])
 
   useEffect(() => {
@@ -177,6 +181,93 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
     }
   }, [])
 
+  // Groups a page's text items (chord names, lyrics, section labels) into
+  // horizontal bands, one per staff system, so pings can snap to a real
+  // line of the chart instead of landing on an arbitrary point. Coordinates
+  // come out normalized 0..1, matching the annotation coordinate system.
+  //
+  // Sheet music prints a measure number at the left margin at the start of
+  // each staff — that's a far more reliable line boundary than clustering
+  // chord/lyric text by position (which is noisy: chords sit above
+  // arbitrary beats, lyrics wrap unevenly). Falls back to text-clustering
+  // only if no measure numbers are found, for charts engraved without them.
+  const computeLines = async (page, viewport) => {
+    const textContent = await page.getTextContent()
+
+    const items = textContent.items
+      .filter((item) => item.str && item.str.trim().length > 0)
+      .map((item) => {
+        const t = pdfjsLib.Util.transform(viewport.transform, item.transform)
+        const height = Math.hypot(t[2], t[3]) || item.height
+        return { x: t[4], y: t[5], height, str: item.str.trim() }
+      })
+
+    console.log(
+      `[ping-debug] page has ${items.length} text items, width=${Math.round(viewport.width)}:`,
+      items.map((it) => ({ str: it.str, x: Math.round(it.x), y: Math.round(it.y) }))
+    )
+
+    if (items.length === 0) return []
+
+    const contentTop = Math.min(...items.map((it) => it.y - it.height))
+    const contentBottom = Math.max(...items.map((it) => it.y + it.height * 0.3))
+
+    const leftEdge = viewport.width * 0.12
+    const measureLabels = items
+      .filter((it) => /^\d{1,3}$/.test(it.str) && it.x < leftEdge)
+      .sort((a, b) => a.y - b.y)
+
+    let starts
+    if (measureLabels.length >= 2) {
+      starts = measureLabels.map((m) => m.y - m.height)
+    } else {
+      const Y_TOLERANCE_PX = 6
+      starts = []
+      for (const item of [...items].sort((a, b) => a.y - b.y)) {
+        const top = item.y - item.height
+        if (!starts.some((s) => Math.abs(s - top) <= Y_TOLERANCE_PX)) starts.push(top)
+      }
+    }
+
+    if (starts.length === 0 || starts[0] > contentTop + 4) starts.unshift(contentTop)
+
+    return starts.map((y0, i) => ({
+      x0: 0,
+      x1: 1,
+      y0: y0 / viewport.height,
+      y1: (i + 1 < starts.length ? starts[i + 1] : contentBottom) / viewport.height,
+    }))
+  }
+
+  const findNearestLine = (pageKey, pos) => {
+    const lines = pageLinesRef.current[pageKey] ?? []
+    let best = -1
+    let bestDist = Infinity
+    lines.forEach((line, i) => {
+      const midY = (line.y0 + line.y1) / 2
+      const dist = Math.abs(pos[1] - midY)
+      if (dist < bestDist) {
+        bestDist = dist
+        best = i
+      }
+    })
+    return best
+  }
+
+  const drawPingLines = (ctx, canvas, pageKey) => {
+    const lines = pageLinesRef.current[pageKey] ?? []
+    const hovered = hoveredLineRef.current[pageKey]
+    lines.forEach((line, i) => {
+      ctx.fillStyle = i === hovered ? 'rgba(255, 180, 0, 0.4)' : 'rgba(0, 140, 255, 0.12)'
+      ctx.fillRect(
+        line.x0 * canvas.width,
+        line.y0 * canvas.height,
+        (line.x1 - line.x0) * canvas.width,
+        (line.y1 - line.y0) * canvas.height
+      )
+    })
+  }
+
   const redrawPage = (pageKey) => {
     const canvas = overlaysRef.current[pageKey]
     if (!canvas) return
@@ -184,6 +275,9 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
     ctx.clearRect(0, 0, canvas.width, canvas.height)
     for (const ann of annotationsRef.current[pageKey] ?? []) {
       renderAnnotation(ctx, canvas, ann)
+    }
+    if (toolRef.current === 'ping') {
+      drawPingLines(ctx, canvas, pageKey)
     }
   }
 
@@ -272,6 +366,12 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
         return
       }
 
+      if (tool_ === 'ping') {
+        hoveredLineRef.current[pageKey] = findNearestLine(pageKey, pos)
+        redrawPage(pageKey)
+        return
+      }
+
       drawing = true
       points = [pos]
       overlay.setPointerCapture(e.pointerId)
@@ -283,6 +383,12 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
       if (erasing) {
         const hit = findHit(overlay, pageKey, pos)
         if (hit) eraseAnnotation(pageKey, hit)
+        return
+      }
+
+      if (toolRef.current === 'ping') {
+        hoveredLineRef.current[pageKey] = findNearestLine(pageKey, pos)
+        redrawPage(pageKey)
         return
       }
 
@@ -410,6 +516,7 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
         pageWrappersRef.current[pageKey] = pageWrapper
         overlaysRef.current[pageKey] = overlay
         annotationsRef.current[pageKey] = []
+        pageLinesRef.current[pageKey] = await computeLines(page, viewport)
         attachDrawing(overlay, chart.id, pageNumber, pageKey)
         numPagesRef.current += 1
         setNumPages(numPagesRef.current)
@@ -513,8 +620,19 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
         <button onClick={() => setTool('erase')} disabled={tool === 'erase'}>
           Erase
         </button>{' '}
+        <button onClick={() => setTool('ping')} disabled={tool === 'ping'}>
+          Ping (testing)
+        </button>{' '}
         {!fullscreen && <button onClick={() => setFullscreen(true)}>Expand</button>}
       </div>
+
+      {tool === 'ping' && (
+        <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: '#666' }}>
+          Detected lines are highlighted in blue — tap one to check it lines up with a real
+          chord/lyric row. This is just checking the detection works; pinging to other people
+          isn't wired up yet.
+        </p>
+      )}
 
       {(tool === 'draw' || tool === 'text') && (
         <div style={{ marginTop: '0.5rem' }}>

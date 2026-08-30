@@ -19,9 +19,10 @@ const sortCharts = (charts, sortBy) => {
   return sorted
 }
 
-function Charts({ currentUserId, canManage }) {
+function Charts({ currentUserId, canManage, isHost }) {
   const [charts, setCharts] = useState([])
   const [sortBy, setSortBy] = useState('title') // 'title' | 'key' | 'date'
+  const [showArchived, setShowArchived] = useState(false)
   const [title, setTitle] = useState('')
   const [musicalKey, setMusicalKey] = useState('')
   const [file, setFile] = useState(null)
@@ -31,7 +32,7 @@ function Charts({ currentUserId, canManage }) {
   const loadCharts = () => {
     supabase
       .from('charts')
-      .select('id, title, musical_key, storage_path, created_at')
+      .select('id, title, musical_key, storage_path, created_at, archived')
       .then(({ data }) => setCharts(data ?? []))
   }
 
@@ -85,9 +86,43 @@ function Charts({ currentUserId, canManage }) {
     setViewing({ id: chartId, url: data.signedUrl })
   }
 
+  const archiveChart = async (chart) => {
+    const { error } = await supabase.from('charts').update({ archived: true }).eq('id', chart.id)
+    if (error) alert(`Could not archive: ${error.message}`)
+    else loadCharts()
+  }
+
+  const unarchiveChart = async (chart) => {
+    const { error } = await supabase.from('charts').update({ archived: false }).eq('id', chart.id)
+    if (error) alert(`Could not unarchive: ${error.message}`)
+    else loadCharts()
+  }
+
+  const deleteChart = async (chart) => {
+    if (!window.confirm(`Permanently delete "${chart.title}"? This cannot be undone.`)) return
+
+    const { error: deleteError } = await supabase.from('charts').delete().eq('id', chart.id)
+    if (deleteError) {
+      alert(`Could not delete: ${deleteError.message}`)
+      return
+    }
+    await supabase.storage.from('charts').remove([chart.storage_path])
+    loadCharts()
+  }
+
   return (
     <div style={{ marginTop: '2rem' }}>
       <div style={{ textAlign: 'right' }}>
+        {isHost && (
+          <label style={{ marginRight: '1rem' }}>
+            <input
+              type="checkbox"
+              checked={showArchived}
+              onChange={(e) => setShowArchived(e.target.checked)}
+            />{' '}
+            Show archived
+          </label>
+        )}
         <label>
           Sort by:{' '}
           <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
@@ -98,11 +133,26 @@ function Charts({ currentUserId, canManage }) {
         </label>
       </div>
       <ul>
-        {sortCharts(charts, sortBy).map((c) => (
+        {sortCharts(
+          charts.filter((c) => !!c.archived === showArchived),
+          sortBy
+        ).map((c) => (
           <li key={c.id}>
             {c.title}
             {c.musical_key && ` — key of ${c.musical_key}`}{' '}
-            <button onClick={() => viewChart(c.id, c.storage_path)}>View</button>
+            <button onClick={() => viewChart(c.id, c.storage_path)}>View</button>{' '}
+            {isHost && !c.archived && (
+              <>
+                <button onClick={() => archiveChart(c)}>Archive</button>{' '}
+                <button onClick={() => deleteChart(c)}>Delete</button>
+              </>
+            )}
+            {isHost && c.archived && (
+              <>
+                <button onClick={() => unarchiveChart(c)}>Unarchive</button>{' '}
+                <button onClick={() => deleteChart(c)}>Delete</button>
+              </>
+            )}
           </li>
         ))}
       </ul>

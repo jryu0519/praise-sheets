@@ -122,6 +122,7 @@ create table charts (
   title text not null,
   musical_key text,
   storage_path text not null,
+  archived boolean not null default false,
   uploaded_by uuid references auth.users (id),
   created_at timestamptz not null default now()
 );
@@ -133,11 +134,24 @@ create policy "charts are readable by any signed-in user"
   to authenticated
   using (true);
 
-create policy "hosts and editors can manage charts"
-  on charts for all
+-- Uploading (insert) is open to hosts and editors alike, but archiving and
+-- deleting a chart is host-only — a more consequential action than adding
+-- one, and restricted at the RLS level, not just hidden in the UI.
+create policy "hosts and editors can upload charts"
+  on charts for insert
   to authenticated
-  using (public.is_host_or_editor())
   with check (public.is_host_or_editor());
+
+create policy "hosts can update charts"
+  on charts for update
+  to authenticated
+  using (public.is_host())
+  with check (public.is_host());
+
+create policy "hosts can delete charts"
+  on charts for delete
+  to authenticated
+  using (public.is_host());
 
 -- Sessions: a setlist for a particular gathering.
 create table sessions (
@@ -199,10 +213,10 @@ create policy "hosts and editors can update chart files"
   using (bucket_id = 'charts' and public.is_host_or_editor())
   with check (bucket_id = 'charts' and public.is_host_or_editor());
 
-create policy "hosts and editors can delete chart files"
+create policy "hosts can delete chart files"
   on storage.objects for delete
   to authenticated
-  using (bucket_id = 'charts' and public.is_host_or_editor());
+  using (bucket_id = 'charts' and public.is_host());
 
 -- Annotations: one row per finished pen stroke or text note on a chart page.
 -- `points` is a normalized [[x,y], ...] path (0..1 coordinates, relative to

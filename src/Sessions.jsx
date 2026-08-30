@@ -21,6 +21,7 @@ function Sessions({ currentUserId, canManage }) {
     supabase
       .from('charts')
       .select('id, title, musical_key')
+      .eq('archived', false)
       .order('created_at', { ascending: true })
       .then(({ data }) => setAvailableCharts(data ?? []))
   }

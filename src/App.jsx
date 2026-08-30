@@ -137,7 +137,7 @@ function App() {
           )}
 
           {role && page === 'home' && (
-            <Home currentUserId={session.user.id} canManage={canManage} />
+            <Home currentUserId={session.user.id} canManage={canManage} isHost={role === 'host'} />
           )}
           {role && page === 'sessions' && (
             <Sessions currentUserId={session.user.id} canManage={canManage} />
