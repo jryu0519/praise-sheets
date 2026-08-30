@@ -11,6 +11,21 @@ file is the quick-resume summary.
 ## Stack
 React + Vite (JavaScript) · Supabase (auth, Postgres, storage, realtime) · PDF.js · vite-plugin-pwa · Vercel
 
+## Design direction (for later — functionality first, per user)
+
+User shared a reference image (2026-08-29) of the visual style to aim for
+once we get to UI/UX polish, not before. Key elements to carry over:
+- Soft lavender/purple background behind the app chrome
+- High-contrast black cards/panels for primary content, off-white/cream
+  for secondary surfaces
+- A single punchy accent color (yellow-green/lime) used sparingly for
+  highlights and callouts
+- Bold, rounded sans-serif typography, fairly large type for headings
+- Big, chunky, fully-rounded black buttons for primary actions ("Get
+  Started" style)
+- Dashboard-style cards presenting a few key stats/values prominently
+- Generally a modern fintech-app aesthetic, not a plain document/form look
+
 ## Phase status
 
 - [x] **Phase 1 — Foundation**: Vite+React app, Supabase project, deployed to Vercel
