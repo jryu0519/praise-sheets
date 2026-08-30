@@ -120,9 +120,11 @@ values ('charts', 'charts', false);
 create table charts (
   id uuid primary key default gen_random_uuid(),
   title text not null,
+  artist text,
   musical_key text,
   storage_path text not null,
   archived boolean not null default false,
+  ready_for_week boolean not null default false,
   uploaded_by uuid references auth.users (id),
   created_at timestamptz not null default now()
 );

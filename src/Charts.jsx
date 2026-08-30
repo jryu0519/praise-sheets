@@ -2,6 +2,19 @@ import { useEffect, useState } from 'react'
 import { supabase } from './supabaseClient'
 import PdfViewer from './PdfViewer'
 
+const colors = {
+  bg: '#0d0d0f',
+  card: '#1c1c1f',
+  cardHover: '#232326',
+  border: '#2a2a2e',
+  text: '#f5f5f5',
+  subtext: '#8a8a8f',
+  accent: '#3b82f6',
+  accentBg: '#1e2a44',
+  ready: '#22c55e',
+  readyBg: '#123821',
+}
+
 const sortCharts = (charts, sortBy) => {
   const sorted = [...charts]
   if (sortBy === 'key') {
@@ -19,11 +32,47 @@ const sortCharts = (charts, sortBy) => {
   return sorted
 }
 
+const RefreshIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="23 4 23 10 17 10" />
+    <polyline points="1 20 1 14 7 14" />
+    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+  </svg>
+)
+
+const DocumentIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+    <polyline points="14 2 14 8 20 8" />
+  </svg>
+)
+
+const CheckIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="20 6 9 17 4 12" />
+  </svg>
+)
+
+const iconButton = (active, activeColor, activeBg) => ({
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  width: '2.1rem',
+  height: '2.1rem',
+  borderRadius: '10px',
+  border: 'none',
+  cursor: 'pointer',
+  background: active ? activeBg : colors.border,
+  color: active ? activeColor : colors.subtext,
+})
+
 function Charts({ currentUserId, canManage, isHost }) {
   const [charts, setCharts] = useState([])
+  const [search, setSearch] = useState('')
   const [sortBy, setSortBy] = useState('title') // 'title' | 'key' | 'date'
   const [showArchived, setShowArchived] = useState(false)
   const [title, setTitle] = useState('')
+  const [artist, setArtist] = useState('')
   const [musicalKey, setMusicalKey] = useState('')
   const [file, setFile] = useState(null)
   const [uploading, setUploading] = useState(false)
@@ -32,7 +81,7 @@ function Charts({ currentUserId, canManage, isHost }) {
   const loadCharts = () => {
     supabase
       .from('charts')
-      .select('id, title, musical_key, storage_path, created_at, archived')
+      .select('id, title, artist, musical_key, storage_path, created_at, archived, ready_for_week')
       .then(({ data }) => setCharts(data ?? []))
   }
 
@@ -58,6 +107,7 @@ function Charts({ currentUserId, canManage, isHost }) {
 
     const { error: insertError } = await supabase.from('charts').insert({
       title,
+      artist: artist || null,
       musical_key: musicalKey || null,
       storage_path: storagePath,
       uploaded_by: currentUserId,
@@ -67,6 +117,7 @@ function Charts({ currentUserId, canManage, isHost }) {
       alert(`Could not save chart: ${insertError.message}`)
     } else {
       setTitle('')
+      setArtist('')
       setMusicalKey('')
       setFile(null)
       loadCharts()
@@ -84,6 +135,15 @@ function Charts({ currentUserId, canManage, isHost }) {
       return
     }
     setViewing({ id: chartId, url: data.signedUrl })
+  }
+
+  const toggleReady = async (chart) => {
+    const { error } = await supabase
+      .from('charts')
+      .update({ ready_for_week: !chart.ready_for_week })
+      .eq('id', chart.id)
+    if (error) alert(`Could not update: ${error.message}`)
+    else loadCharts()
   }
 
   const archiveChart = async (chart) => {
@@ -110,52 +170,104 @@ function Charts({ currentUserId, canManage, isHost }) {
     loadCharts()
   }
 
+  const visibleCharts = sortCharts(
+    charts.filter(
+      (c) => !!c.archived === showArchived && c.title.toLowerCase().includes(search.toLowerCase())
+    ),
+    sortBy
+  )
+
   return (
-    <div style={{ marginTop: '2rem' }}>
-      <div style={{ textAlign: 'right' }}>
+    <div style={{ marginTop: '1.5rem', background: colors.bg, color: colors.text, borderRadius: '20px', padding: '1.5rem', maxWidth: '700px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h1 style={{ margin: 0, fontSize: '1.75rem', fontWeight: 800 }}>Pri Music Sheetlist</h1>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <span style={{ background: colors.card, color: colors.subtext, padding: '0.4rem 0.8rem', borderRadius: '999px', fontSize: '0.8rem' }}>
+            {charts.filter((c) => !c.archived).length} songs
+          </span>
+          <button onClick={loadCharts} title="Refresh" style={{ ...iconButton(false), borderRadius: '999px' }}>
+            <RefreshIcon />
+          </button>
+        </div>
+      </div>
+
+      <input
+        type="text"
+        placeholder="Search songs..."
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        style={{
+          width: '100%',
+          marginTop: '1rem',
+          padding: '0.75rem 1rem',
+          borderRadius: '12px',
+          border: `1px solid ${colors.border}`,
+          background: colors.card,
+          color: colors.text,
+          boxSizing: 'border-box',
+        }}
+      />
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '1rem', marginTop: '0.75rem', fontSize: '0.85rem', color: colors.subtext }}>
         {isHost && (
-          <label style={{ marginRight: '1rem' }}>
-            <input
-              type="checkbox"
-              checked={showArchived}
-              onChange={(e) => setShowArchived(e.target.checked)}
-            />{' '}
-            Show archived
+          <label>
+            <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} /> Show
+            archived
           </label>
         )}
         <label>
           Sort by:{' '}
-          <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+          <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} style={{ background: colors.card, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: '6px' }}>
             <option value="title">Title (A-Z)</option>
             <option value="key">Key</option>
             <option value="date">Date uploaded (newest first)</option>
           </select>
         </label>
       </div>
-      <ul>
-        {sortCharts(
-          charts.filter((c) => !!c.archived === showArchived),
-          sortBy
-        ).map((c) => (
-          <li key={c.id}>
-            {c.title}
-            {c.musical_key && ` — key of ${c.musical_key}`}{' '}
-            <button onClick={() => viewChart(c.id, c.storage_path)}>View</button>{' '}
-            {isHost && !c.archived && (
-              <>
-                <button onClick={() => archiveChart(c)}>Archive</button>{' '}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', marginTop: '1rem' }}>
+        {visibleCharts.map((c) => (
+          <div key={c.id} style={{ background: colors.card, borderRadius: '14px', padding: '0.9rem 1rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem' }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: '1.05rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {c.title}
+                </div>
+                {c.artist && <div style={{ color: colors.subtext, fontSize: '0.85rem' }}>{c.artist}</div>}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
+                {c.musical_key && (
+                  <span style={{ background: colors.accentBg, color: colors.accent, borderRadius: '8px', padding: '0.25rem 0.6rem', fontSize: '0.85rem', fontWeight: 600 }}>
+                    {c.musical_key}
+                  </span>
+                )}
+                <button onClick={() => viewChart(c.id, c.storage_path)} title="View" style={iconButton(false)}>
+                  <DocumentIcon />
+                </button>
+                {isHost && (
+                  <button
+                    onClick={() => toggleReady(c)}
+                    title="Ready for this week"
+                    style={iconButton(c.ready_for_week, colors.ready, colors.readyBg)}
+                  >
+                    <CheckIcon />
+                  </button>
+                )}
+              </div>
+            </div>
+            {isHost && (
+              <div style={{ marginTop: '0.5rem', fontSize: '0.8rem' }}>
+                {c.archived ? (
+                  <button onClick={() => unarchiveChart(c)}>Unarchive</button>
+                ) : (
+                  <button onClick={() => archiveChart(c)}>Archive</button>
+                )}{' '}
                 <button onClick={() => deleteChart(c)}>Delete</button>
-              </>
+              </div>
             )}
-            {isHost && c.archived && (
-              <>
-                <button onClick={() => unarchiveChart(c)}>Unarchive</button>{' '}
-                <button onClick={() => deleteChart(c)}>Delete</button>
-              </>
-            )}
-          </li>
+          </div>
         ))}
-      </ul>
+      </div>
 
       {viewing && (
         <PdfViewer
@@ -167,25 +279,34 @@ function Charts({ currentUserId, canManage, isHost }) {
       )}
 
       {canManage && (
-        <div>
-          <h3>Upload a chart</h3>
+        <div style={{ marginTop: '1.5rem', background: colors.card, borderRadius: '14px', padding: '1rem' }}>
+          <h3 style={{ marginTop: 0 }}>Upload a chart</h3>
           <input
             type="text"
             placeholder="Title"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-          />
+            style={{ background: colors.bg, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: '8px', padding: '0.5rem' }}
+          />{' '}
+          <input
+            type="text"
+            placeholder="Artist (optional)"
+            value={artist}
+            onChange={(e) => setArtist(e.target.value)}
+            style={{ background: colors.bg, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: '8px', padding: '0.5rem' }}
+          />{' '}
           <input
             type="text"
             placeholder="Key (optional)"
             value={musicalKey}
             onChange={(e) => setMusicalKey(e.target.value)}
-          />
+            style={{ background: colors.bg, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: '8px', padding: '0.5rem' }}
+          />{' '}
           <input
             type="file"
             accept="application/pdf"
             onChange={(e) => setFile(e.target.files[0] ?? null)}
-          />
+          />{' '}
           <button onClick={uploadChart} disabled={uploading}>
             {uploading ? 'Uploading...' : 'Upload'}
           </button>
