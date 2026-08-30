@@ -40,13 +40,26 @@ concrete style than the very first (lavender/black/lime) reference shared
 - `Sessions.jsx` got the same treatment as the song list: centered "Sessions"
   title, session-count pill + refresh, card rows with a chevron. The detail
   view leads with a full-width "View All (Combined)" button and numbered
-  song rows (no drag-reorder yet, per the earlier note — numbers are just
-  the check-order from creation, not draggable).
+  song rows.
 - Fixed a layout bug: the fixed-position "☰ Menu" button was overlapping
   page titles on narrow screens. `App.jsx`'s content wrapper now has
   `paddingTop: '4.5rem'` to clear it, and each page's `<h1>` is centered
   with `margin: '0 auto'` on a `maxWidth` wrapper (not just centered text
   inside a left-aligned column).
+- Sessions are now fully editable (2026-08-30), all host/editor via existing
+  RLS (no new migration needed — `sessions`/`session_charts` were already
+  `is_host_or_editor()`-gated): rename via a pencil icon next to the title;
+  add songs via a checklist of charts not already in the session; remove a
+  song via an X per row; reorder via up/down arrows that swap `position`
+  values with the adjacent row. No drag-and-drop — arrows were chosen
+  deliberately since they work reliably on both mouse and touch without a
+  library, at the cost of being slower for big reorders.
+- `PdfViewer.jsx`'s toolbar (tool buttons, options, Prev/Next) can now be
+  hidden via a "Hide controls" toggle so the PDF can use the reclaimed
+  space — most useful in fullscreen on phones. `layoutPages()`'s height
+  calc changed from a fixed fraction of `window.innerHeight` to measuring
+  the viewport element's actual current top offset, so it responds
+  correctly to toolbar visibility and fullscreen alike without special-casing.
 
 ## Phase status
 
