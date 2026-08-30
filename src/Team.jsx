@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from './supabaseClient'
+import { colors, buttonStyle, primaryButtonStyle, inputStyle } from './theme'
 
 function Team({ currentUserId, isHost }) {
   const [members, setMembers] = useState([])
@@ -59,41 +60,65 @@ function Team({ currentUserId, isHost }) {
       })
   }
 
+  const selectStyle = { ...inputStyle, padding: '0.4rem 0.5rem' }
+
   return (
-    <div style={{ marginTop: '2rem' }}>
-      <h2>Team</h2>
-      <ul>
+    <div style={{ maxWidth: '700px' }}>
+      <h1 style={{ fontSize: '1.75rem', fontWeight: 800 }}>Team</h1>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
         {members.map((m) => (
-          <li key={m.user_id}>
-            {m.email} — {m.role}
+          <div
+            key={m.user_id}
+            style={{
+              background: colors.card,
+              borderRadius: '14px',
+              padding: '0.9rem 1rem',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '0.75rem',
+              flexWrap: 'wrap',
+            }}
+          >
+            <div>
+              <div style={{ fontWeight: 700 }}>{m.email}</div>
+              <div style={{ color: colors.subtext, fontSize: '0.85rem' }}>{m.role}</div>
+            </div>
             {isHost && m.user_id !== currentUserId && (
-              <>
-                {' '}
-                <select value={m.role} onChange={(e) => changeRole(m.user_id, e.target.value)}>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <select value={m.role} onChange={(e) => changeRole(m.user_id, e.target.value)} style={selectStyle}>
                   <option value="member">member</option>
                   <option value="editor">editor</option>
-                </select>{' '}
-                <button onClick={() => transferHost(m.user_id)}>Make host</button>
-              </>
+                </select>
+                <button onClick={() => transferHost(m.user_id)} style={buttonStyle}>
+                  Make host
+                </button>
+              </div>
             )}
-          </li>
+          </div>
         ))}
-      </ul>
+      </div>
 
       {isHost && (
-        <div>
-          <h3>Invite someone</h3>
-          <input
-            type="email"
-            placeholder="teammate@gmail.com"
-            value={inviteEmail}
-            onChange={(e) => setInviteEmail(e.target.value)}
-          />
-          <select value={inviteRole} onChange={(e) => setInviteRole(e.target.value)}>
-            <option value="member">member</option>
-            <option value="editor">editor</option>
-          </select>
-          <button onClick={sendInvite}>Send Gmail invite</button>
+        <div style={{ marginTop: '1.5rem', background: colors.card, borderRadius: '14px', padding: '1rem' }}>
+          <h3 style={{ marginTop: 0 }}>Invite someone</h3>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
+            <input
+              type="email"
+              placeholder="teammate@gmail.com"
+              value={inviteEmail}
+              onChange={(e) => setInviteEmail(e.target.value)}
+              style={inputStyle}
+            />
+            <select value={inviteRole} onChange={(e) => setInviteRole(e.target.value)} style={selectStyle}>
+              <option value="member">member</option>
+              <option value="editor">editor</option>
+            </select>
+            <button onClick={sendInvite} style={primaryButtonStyle}>
+              Send Gmail invite
+            </button>
+          </div>
         </div>
       )}
     </div>

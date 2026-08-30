@@ -1,19 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from './supabaseClient'
 import PdfViewer from './PdfViewer'
-
-const colors = {
-  bg: '#0d0d0f',
-  card: '#1c1c1f',
-  cardHover: '#232326',
-  border: '#2a2a2e',
-  text: '#f5f5f5',
-  subtext: '#8a8a8f',
-  accent: '#3b82f6',
-  accentBg: '#1e2a44',
-  ready: '#22c55e',
-  readyBg: '#123821',
-}
+import { colors, buttonStyle, primaryButtonStyle, dangerButtonStyle, inputStyle, iconButtonStyle } from './theme'
 
 const sortCharts = (charts, sortBy) => {
   const sorted = [...charts]
@@ -52,19 +40,6 @@ const CheckIcon = () => (
     <polyline points="20 6 9 17 4 12" />
   </svg>
 )
-
-const iconButton = (active, activeColor, activeBg) => ({
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  width: '2.1rem',
-  height: '2.1rem',
-  borderRadius: '10px',
-  border: 'none',
-  cursor: 'pointer',
-  background: active ? activeBg : colors.border,
-  color: active ? activeColor : colors.subtext,
-})
 
 function Charts({ currentUserId, canManage, isHost }) {
   const [charts, setCharts] = useState([])
@@ -178,14 +153,14 @@ function Charts({ currentUserId, canManage, isHost }) {
   )
 
   return (
-    <div style={{ marginTop: '1.5rem', background: colors.bg, color: colors.text, borderRadius: '20px', padding: '1.5rem', maxWidth: '700px' }}>
+    <div style={{ maxWidth: '700px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h1 style={{ margin: 0, fontSize: '1.75rem', fontWeight: 800 }}>Pri Music Sheetlist</h1>
+        <h1 style={{ margin: 0, fontSize: '1.75rem', fontWeight: 800 }}>Pri Music Sheet List</h1>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
           <span style={{ background: colors.card, color: colors.subtext, padding: '0.4rem 0.8rem', borderRadius: '999px', fontSize: '0.8rem' }}>
             {charts.filter((c) => !c.archived).length} songs
           </span>
-          <button onClick={loadCharts} title="Refresh" style={{ ...iconButton(false), borderRadius: '999px' }}>
+          <button onClick={loadCharts} title="Refresh" style={{ ...iconButtonStyle(false), borderRadius: '999px' }}>
             <RefreshIcon />
           </button>
         </div>
@@ -241,14 +216,14 @@ function Charts({ currentUserId, canManage, isHost }) {
                     {c.musical_key}
                   </span>
                 )}
-                <button onClick={() => viewChart(c.id, c.storage_path)} title="View" style={iconButton(false)}>
+                <button onClick={() => viewChart(c.id, c.storage_path)} title="View" style={iconButtonStyle(false)}>
                   <DocumentIcon />
                 </button>
                 {isHost && (
                   <button
                     onClick={() => toggleReady(c)}
                     title="Ready for this week"
-                    style={iconButton(c.ready_for_week, colors.ready, colors.readyBg)}
+                    style={iconButtonStyle(c.ready_for_week, colors.ready, colors.readyBg)}
                   >
                     <CheckIcon />
                   </button>
@@ -256,13 +231,19 @@ function Charts({ currentUserId, canManage, isHost }) {
               </div>
             </div>
             {isHost && (
-              <div style={{ marginTop: '0.5rem', fontSize: '0.8rem' }}>
+              <div style={{ marginTop: '0.6rem', display: 'flex', gap: '0.5rem' }}>
                 {c.archived ? (
-                  <button onClick={() => unarchiveChart(c)}>Unarchive</button>
+                  <button onClick={() => unarchiveChart(c)} style={buttonStyle}>
+                    Unarchive
+                  </button>
                 ) : (
-                  <button onClick={() => archiveChart(c)}>Archive</button>
-                )}{' '}
-                <button onClick={() => deleteChart(c)}>Delete</button>
+                  <button onClick={() => archiveChart(c)} style={buttonStyle}>
+                    Archive
+                  </button>
+                )}
+                <button onClick={() => deleteChart(c)} style={dangerButtonStyle}>
+                  Delete
+                </button>
               </div>
             )}
           </div>
@@ -281,35 +262,37 @@ function Charts({ currentUserId, canManage, isHost }) {
       {canManage && (
         <div style={{ marginTop: '1.5rem', background: colors.card, borderRadius: '14px', padding: '1rem' }}>
           <h3 style={{ marginTop: 0 }}>Upload a chart</h3>
-          <input
-            type="text"
-            placeholder="Title"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            style={{ background: colors.bg, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: '8px', padding: '0.5rem' }}
-          />{' '}
-          <input
-            type="text"
-            placeholder="Artist (optional)"
-            value={artist}
-            onChange={(e) => setArtist(e.target.value)}
-            style={{ background: colors.bg, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: '8px', padding: '0.5rem' }}
-          />{' '}
-          <input
-            type="text"
-            placeholder="Key (optional)"
-            value={musicalKey}
-            onChange={(e) => setMusicalKey(e.target.value)}
-            style={{ background: colors.bg, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: '8px', padding: '0.5rem' }}
-          />{' '}
-          <input
-            type="file"
-            accept="application/pdf"
-            onChange={(e) => setFile(e.target.files[0] ?? null)}
-          />{' '}
-          <button onClick={uploadChart} disabled={uploading}>
-            {uploading ? 'Uploading...' : 'Upload'}
-          </button>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
+            <input
+              type="text"
+              placeholder="Title"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              style={inputStyle}
+            />
+            <input
+              type="text"
+              placeholder="Artist (optional)"
+              value={artist}
+              onChange={(e) => setArtist(e.target.value)}
+              style={inputStyle}
+            />
+            <input
+              type="text"
+              placeholder="Key (optional)"
+              value={musicalKey}
+              onChange={(e) => setMusicalKey(e.target.value)}
+              style={inputStyle}
+            />
+            <input
+              type="file"
+              accept="application/pdf"
+              onChange={(e) => setFile(e.target.files[0] ?? null)}
+            />
+            <button onClick={uploadChart} disabled={uploading} style={primaryButtonStyle}>
+              {uploading ? 'Uploading...' : 'Upload'}
+            </button>
+          </div>
         </div>
       )}
     </div>

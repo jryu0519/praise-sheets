@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import * as pdfjsLib from 'pdfjs-dist'
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs?url'
 import { supabase } from './supabaseClient'
+import { colors, buttonStyle, primaryButtonStyle } from './theme'
+
+const toolButtonStyle = (active) => (active ? primaryButtonStyle : buttonStyle)
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker
 
@@ -680,59 +683,66 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
               position: 'fixed',
               inset: 0,
               zIndex: 1000,
-              background: 'white',
+              background: colors.bg,
+              color: colors.text,
               padding: '1rem',
               overflowY: 'auto',
             }
-          : { marginTop: '1rem', border: '1px solid #ccc', padding: '1rem' }
+          : { marginTop: '1rem', background: colors.card, color: colors.text, borderRadius: '16px', padding: '1rem' }
       }
     >
       {fullscreen && (
         <button
           onClick={() => setFullscreen(false)}
-          style={{ position: 'absolute', bottom: '0.5rem', right: '0.5rem' }}
+          style={{ ...primaryButtonStyle, position: 'absolute', bottom: '0.5rem', right: '0.5rem' }}
         >
           Back to regular size
         </button>
       )}
 
-      <div>
-        <button onClick={onClose}>Close</button>{' '}
-        <button onClick={() => setTool('view')} disabled={tool === 'view'}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+        <button onClick={onClose} style={buttonStyle}>
+          Close
+        </button>
+        <button onClick={() => setTool('view')} style={toolButtonStyle(tool === 'view')}>
           View
-        </button>{' '}
-        <button onClick={() => setTool('draw')} disabled={tool === 'draw'}>
+        </button>
+        <button onClick={() => setTool('draw')} style={toolButtonStyle(tool === 'draw')}>
           Draw
-        </button>{' '}
-        <button onClick={() => setTool('text')} disabled={tool === 'text'}>
+        </button>
+        <button onClick={() => setTool('text')} style={toolButtonStyle(tool === 'text')}>
           Text
-        </button>{' '}
-        <button onClick={() => setTool('erase')} disabled={tool === 'erase'}>
+        </button>
+        <button onClick={() => setTool('erase')} style={toolButtonStyle(tool === 'erase')}>
           Erase
-        </button>{' '}
+        </button>
         {canDrawShared && (
-          <button onClick={() => setTool('markSections')} disabled={tool === 'markSections'}>
+          <button onClick={() => setTool('markSections')} style={toolButtonStyle(tool === 'markSections')}>
             Mark Sections
           </button>
-        )}{' '}
-        {!fullscreen && <button onClick={() => setFullscreen(true)}>Expand</button>}
+        )}
+        {!fullscreen && (
+          <button onClick={() => setFullscreen(true)} style={buttonStyle}>
+            Expand
+          </button>
+        )}
       </div>
 
       {tool === 'markSections' && (
-        <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: '#666' }}>
+        <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: colors.subtext }}>
           Drag to select a region, like a screenshot tool (tap an existing section to remove it).
           Sections can't overlap. Once marked, switch to View and double-click/double-tap a
           section to ping everyone currently viewing this chart to that spot.
         </p>
       )}
       {canDrawShared && tool === 'view' && (
-        <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: '#666' }}>
+        <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: colors.subtext }}>
           Double-click/double-tap a marked section to ping everyone viewing this chart.
         </p>
       )}
 
       {(tool === 'draw' || tool === 'text') && (
-        <div style={{ marginTop: '0.5rem' }}>
+        <div style={{ marginTop: '0.75rem', display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
           <label>
             <input
               type="radio"
@@ -740,7 +750,7 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
               onChange={() => setVisibility('personal')}
             />{' '}
             Just me
-          </label>{' '}
+          </label>
           {canDrawShared && (
             <label>
               <input
@@ -750,7 +760,7 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
               />{' '}
               Everyone
             </label>
-          )}{' '}
+          )}
           {COLORS.map((c) => (
             <button
               key={c}
@@ -759,24 +769,26 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
                 background: c,
                 width: '1.5rem',
                 height: '1.5rem',
-                border: color === c ? '2px solid black' : '1px solid #ccc',
+                borderRadius: '6px',
+                border: color === c ? `2px solid ${colors.text}` : `1px solid ${colors.border}`,
                 verticalAlign: 'middle',
+                cursor: 'pointer',
               }}
             />
           ))}
           {tool === 'draw' && (
-            <span style={{ marginLeft: '0.5rem' }}>
+            <span style={{ display: 'flex', gap: '0.4rem' }}>
               {LINE_WIDTHS.map((w) => (
-                <button key={w} onClick={() => setLineWidth(w)} disabled={lineWidth === w}>
+                <button key={w} onClick={() => setLineWidth(w)} style={toolButtonStyle(lineWidth === w)}>
                   {w}px
                 </button>
               ))}
             </span>
           )}
           {tool === 'text' && (
-            <span style={{ marginLeft: '0.5rem' }}>
+            <span style={{ display: 'flex', gap: '0.4rem' }}>
               {FONT_SIZES.map((s) => (
-                <button key={s} onClick={() => setFontSize(s)} disabled={fontSize === s}>
+                <button key={s} onClick={() => setFontSize(s)} style={toolButtonStyle(fontSize === s)}>
                   {s}px
                 </button>
               ))}
@@ -785,20 +797,20 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
         </div>
       )}
 
-      {error && <p style={{ color: 'red' }}>Could not render PDF: {error}</p>}
+      {error && <p style={{ color: colors.danger }}>Could not render PDF: {error}</p>}
 
-      <div style={{ marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-        <button onClick={goPrev} disabled={currentIndex === 0}>
+      <div style={{ marginTop: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <button onClick={goPrev} disabled={currentIndex === 0} style={buttonStyle}>
           ‹ Prev
         </button>
         {numPages > 0 && (
-          <span>
+          <span style={{ color: colors.subtext, fontSize: '0.9rem' }}>
             {pagesPerViewRef.current === 2 && currentIndex + 2 <= numPages
               ? `Pages ${currentIndex + 1}-${currentIndex + 2} of ${numPages}`
               : `Page ${currentIndex + 1} of ${numPages}`}
           </span>
         )}
-        <button onClick={goNext} disabled={currentIndex >= numPages - 1}>
+        <button onClick={goNext} disabled={currentIndex >= numPages - 1} style={buttonStyle}>
           Next ›
         </button>
       </div>
