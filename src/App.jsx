@@ -94,7 +94,7 @@ function App() {
   }
 
   return (
-    <div style={{ ...pageStyle, padding: '2rem' }}>
+    <div style={{ ...pageStyle, padding: '2rem', paddingTop: '4.5rem' }}>
       {role && (
         <div style={{ position: 'fixed', top: '1rem', left: '1rem', zIndex: 10 }}>
           <button

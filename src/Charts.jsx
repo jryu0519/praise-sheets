@@ -41,6 +41,12 @@ const CheckIcon = () => (
   </svg>
 )
 
+const PencilIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+  </svg>
+)
+
 function Charts({ currentUserId, canManage, isHost }) {
   const [charts, setCharts] = useState([])
   const [search, setSearch] = useState('')
@@ -52,6 +58,9 @@ function Charts({ currentUserId, canManage, isHost }) {
   const [file, setFile] = useState(null)
   const [uploading, setUploading] = useState(false)
   const [viewing, setViewing] = useState(null)
+  const [editingId, setEditingId] = useState(null)
+  const [editTitle, setEditTitle] = useState('')
+  const [editArtist, setEditArtist] = useState('')
 
   const loadCharts = () => {
     supabase
@@ -121,6 +130,30 @@ function Charts({ currentUserId, canManage, isHost }) {
     else loadCharts()
   }
 
+  const startEdit = (chart) => {
+    setEditingId(chart.id)
+    setEditTitle(chart.title)
+    setEditArtist(chart.artist || '')
+  }
+
+  const cancelEdit = () => {
+    setEditingId(null)
+  }
+
+  const saveEdit = async (chart) => {
+    if (!editTitle) return
+    const { error } = await supabase
+      .from('charts')
+      .update({ title: editTitle, artist: editArtist || null })
+      .eq('id', chart.id)
+    if (error) {
+      alert(`Could not save changes: ${error.message}`)
+      return
+    }
+    setEditingId(null)
+    loadCharts()
+  }
+
   const archiveChart = async (chart) => {
     const { error } = await supabase.from('charts').update({ archived: true }).eq('id', chart.id)
     if (error) alert(`Could not archive: ${error.message}`)
@@ -153,17 +186,18 @@ function Charts({ currentUserId, canManage, isHost }) {
   )
 
   return (
-    <div style={{ maxWidth: '700px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h1 style={{ margin: 0, fontSize: '1.75rem', fontWeight: 800 }}>Pri Music Sheet List</h1>
-        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-          <span style={{ background: colors.card, color: colors.subtext, padding: '0.4rem 0.8rem', borderRadius: '999px', fontSize: '0.8rem' }}>
-            {charts.filter((c) => !c.archived).length} songs
-          </span>
-          <button onClick={loadCharts} title="Refresh" style={{ ...iconButtonStyle(false), borderRadius: '999px' }}>
-            <RefreshIcon />
-          </button>
-        </div>
+    <div style={{ maxWidth: '700px', margin: '0 auto' }}>
+      <h1 style={{ margin: 0, fontSize: '1.75rem', fontWeight: 800, textAlign: 'center' }}>
+        Pri Music Sheet List
+      </h1>
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', alignItems: 'center', marginTop: '0.75rem' }}>
+        <span style={{ background: colors.card, color: colors.subtext, padding: '0.4rem 0.8rem', borderRadius: '999px', fontSize: '0.8rem' }}>
+          {charts.filter((c) => !c.archived).length} songs
+        </span>
+        <button onClick={loadCharts} title="Refresh" style={{ ...iconButtonStyle(false), borderRadius: '999px' }}>
+          <RefreshIcon />
+        </button>
       </div>
 
       <input
@@ -203,34 +237,64 @@ function Charts({ currentUserId, canManage, isHost }) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', marginTop: '1rem' }}>
         {visibleCharts.map((c) => (
           <div key={c.id} style={{ background: colors.card, borderRadius: '14px', padding: '0.9rem 1rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem' }}>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontWeight: 700, fontSize: '1.05rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {c.title}
-                </div>
-                {c.artist && <div style={{ color: colors.subtext, fontSize: '0.85rem' }}>{c.artist}</div>}
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
-                {c.musical_key && (
-                  <span style={{ background: colors.accentBg, color: colors.accent, borderRadius: '8px', padding: '0.25rem 0.6rem', fontSize: '0.85rem', fontWeight: 600 }}>
-                    {c.musical_key}
-                  </span>
-                )}
-                <button onClick={() => viewChart(c.id, c.storage_path)} title="View" style={iconButtonStyle(false)}>
-                  <DocumentIcon />
+            {editingId === c.id ? (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
+                <input
+                  type="text"
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  placeholder="Title"
+                  style={inputStyle}
+                />
+                <input
+                  type="text"
+                  value={editArtist}
+                  onChange={(e) => setEditArtist(e.target.value)}
+                  placeholder="Artist (optional)"
+                  style={inputStyle}
+                />
+                <button onClick={() => saveEdit(c)} style={primaryButtonStyle}>
+                  Save
                 </button>
-                {isHost && (
-                  <button
-                    onClick={() => toggleReady(c)}
-                    title="Ready for this week"
-                    style={iconButtonStyle(c.ready_for_week, colors.ready, colors.readyBg)}
-                  >
-                    <CheckIcon />
-                  </button>
-                )}
+                <button onClick={cancelEdit} style={buttonStyle}>
+                  Cancel
+                </button>
               </div>
-            </div>
-            {isHost && (
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem' }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: '1.05rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {c.title}
+                  </div>
+                  {c.artist && <div style={{ color: colors.subtext, fontSize: '0.85rem' }}>{c.artist}</div>}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
+                  {c.musical_key && (
+                    <span style={{ background: colors.accentBg, color: colors.accent, borderRadius: '8px', padding: '0.25rem 0.6rem', fontSize: '0.85rem', fontWeight: 600 }}>
+                      {c.musical_key}
+                    </span>
+                  )}
+                  <button onClick={() => viewChart(c.id, c.storage_path)} title="View" style={iconButtonStyle(false)}>
+                    <DocumentIcon />
+                  </button>
+                  {isHost && (
+                    <>
+                      <button onClick={() => startEdit(c)} title="Edit title/artist" style={iconButtonStyle(false)}>
+                        <PencilIcon />
+                      </button>
+                      <button
+                        onClick={() => toggleReady(c)}
+                        title="Ready for this week"
+                        style={iconButtonStyle(c.ready_for_week, colors.ready, colors.readyBg)}
+                      >
+                        <CheckIcon />
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+            {isHost && editingId !== c.id && (
               <div style={{ marginTop: '0.6rem', display: 'flex', gap: '0.5rem' }}>
                 {c.archived ? (
                   <button onClick={() => unarchiveChart(c)} style={buttonStyle}>
