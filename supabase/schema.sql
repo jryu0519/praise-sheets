@@ -262,31 +262,35 @@ create policy "users can manage their own annotations"
 -- other people's finished strokes without a page reload.
 alter publication supabase_realtime add table annotations;
 
--- Manually-marked line/staff boundaries per chart page. Automatic
+-- Manually drag-selected rectangular regions per chart page (like a
+-- screenshot tool), defining the pingable sections of a chart. Automatic
 -- text-based detection doesn't work on charts whose musical content
 -- (chords, lyrics, measure numbers) is rendered as vector shapes or
 -- custom-font glyphs rather than extractable text — common with sheet
--- music exported from notation software. A host/editor marks each line's
--- start position once; `y_position` is normalized 0..1 down the page,
+-- music exported from notation software. Coordinates are normalized 0..1,
 -- matching the annotation coordinate system.
-create table chart_lines (
+create table chart_sections (
   id uuid primary key default gen_random_uuid(),
   chart_id uuid not null references charts (id) on delete cascade,
   page_number integer not null,
-  y_position numeric not null,
+  x0 numeric not null,
+  y0 numeric not null,
+  x1 numeric not null,
+  y1 numeric not null,
   created_by uuid references auth.users (id),
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  constraint chart_sections_valid_box check (x0 < x1 and y0 < y1)
 );
 
-alter table chart_lines enable row level security;
+alter table chart_sections enable row level security;
 
-create policy "chart_lines are readable by any signed-in user"
-  on chart_lines for select
+create policy "chart_sections are readable by any signed-in user"
+  on chart_sections for select
   to authenticated
   using (true);
 
-create policy "hosts and editors can manage chart_lines"
-  on chart_lines for all
+create policy "hosts and editors can manage chart_sections"
+  on chart_sections for all
   to authenticated
   using (public.is_host_or_editor())
   with check (public.is_host_or_editor());

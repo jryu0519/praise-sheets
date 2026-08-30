@@ -26,9 +26,9 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
   const pageWrappersRef = useRef({}) // pageKey -> wrapper div (sized as a slot)
   const overlaysRef = useRef({}) // pageKey -> overlay canvas element
   const annotationsRef = useRef({}) // pageKey -> array of annotation rows (with id)
-  const chartLinesRef = useRef({}) // pageKey -> array of manually-marked line rows { id, y }, sorted ascending
+  const chartSectionsRef = useRef({}) // pageKey -> array of drag-selected section rows { id, x0, y0, x1, y1 }
   const pageOrderRef = useRef([]) // pageKey list in track order, for jumping to a pinged page
-  const pingFlashRef = useRef({}) // pageKey -> { bandIndex, timeoutId } for the temporary ping highlight
+  const pingFlashRef = useRef({}) // pageKey -> { sectionIndex, timeoutId } for the temporary ping highlight
   const channelRef = useRef(null) // the realtime channel, so double-click can broadcast a ping on it
   const toolRef = useRef('view')
   const visibilityRef = useRef('personal')
@@ -43,7 +43,7 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
   const fullscreenRef = useRef(false)
   const [error, setError] = useState(null)
   const [fullscreen, setFullscreen] = useState(false)
-  const [tool, setTool] = useState('view') // 'view' | 'draw' | 'text' | 'erase' | 'markLines'
+  const [tool, setTool] = useState('view') // 'view' | 'draw' | 'text' | 'erase' | 'markSections'
   const [visibility, setVisibility] = useState('personal') // 'personal' | 'shared'
   const [color, setColor] = useState(COLORS[0])
   const [lineWidth, setLineWidth] = useState(LINE_WIDTHS[1])
@@ -183,54 +183,96 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
     }
   }, [])
 
-  // Turns the manually-marked line boundaries for a page into full-width
-  // bands: band i spans from marker i's y down to the next marker's y (or
-  // the bottom of the page for the last one). Automatic text-based
-  // detection doesn't work here — this chart's chords/lyrics/measure
-  // numbers are vector shapes or custom-font glyphs, not extractable text —
-  // so a host/editor marks each staff's start once via the Mark Lines tool.
-  const bandsFor = (pageKey) => {
-    const markers = [...(chartLinesRef.current[pageKey] ?? [])].sort((a, b) => a.y - b.y)
-    return markers.map((m, i) => ({
-      y0: m.y,
-      y1: i + 1 < markers.length ? markers[i + 1].y : 1,
-    }))
+  // Sections are drag-selected rectangles (normalized 0..1), like a
+  // screenshot tool — a host/editor marks each pingable region once via
+  // the Mark Sections tool. Automatic text-based detection doesn't work
+  // here — this chart's chords/lyrics/measure numbers are vector shapes or
+  // custom-font glyphs, not extractable text.
+  const rectsOverlap = (a, b) => a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0
+
+  const findSectionAt = (pageKey, pos) => {
+    const sections = chartSectionsRef.current[pageKey] ?? []
+    return sections.find((s) => pos[0] >= s.x0 && pos[0] <= s.x1 && pos[1] >= s.y0 && pos[1] <= s.y1)
   }
 
-  const findNearestLine = (pageKey, pos) => {
-    const bands = bandsFor(pageKey)
-    let best = -1
-    let bestDist = Infinity
-    bands.forEach((band, i) => {
-      const midY = (band.y0 + band.y1) / 2
-      const dist = Math.abs(pos[1] - midY)
-      if (dist < bestDist) {
-        bestDist = dist
-        best = i
-      }
-    })
-    return best
+  const drawSections = (ctx, canvas, pageKey) => {
+    for (const s of chartSectionsRef.current[pageKey] ?? []) {
+      ctx.strokeStyle = '#e63946'
+      ctx.lineWidth = 2
+      ctx.strokeRect(s.x0 * canvas.width, s.y0 * canvas.height, (s.x1 - s.x0) * canvas.width, (s.y1 - s.y0) * canvas.height)
+    }
   }
 
-  // Briefly highlights a pinged line for everyone (including the sender),
-  // independent of whatever tool is active.
+  const drawSectionPreview = (ctx, canvas, start, current) => {
+    const x0 = Math.min(start[0], current[0]) * canvas.width
+    const y0 = Math.min(start[1], current[1]) * canvas.height
+    const w = Math.abs(current[0] - start[0]) * canvas.width
+    const h = Math.abs(current[1] - start[1]) * canvas.height
+    ctx.fillStyle = 'rgba(0, 140, 255, 0.2)'
+    ctx.fillRect(x0, y0, w, h)
+    ctx.strokeStyle = '#0088ff'
+    ctx.lineWidth = 2
+    ctx.strokeRect(x0, y0, w, h)
+  }
+
+  const addSection = async (chartId, pageNumber, pageKey, rect) => {
+    const existingSections = chartSectionsRef.current[pageKey] ?? []
+    if (existingSections.some((s) => rectsOverlap(s, rect))) {
+      alert("This overlaps an existing section — sections can't overlap.")
+      redrawPage(pageKey)
+      return
+    }
+
+    const optimistic = { ...rect }
+    chartSectionsRef.current[pageKey] = [...existingSections, optimistic]
+    redrawPage(pageKey)
+
+    const { data, error: insertError } = await supabase
+      .from('chart_sections')
+      .insert({ chart_id: chartId, page_number: pageNumber, ...rect, created_by: currentUserId })
+      .select()
+      .single()
+
+    if (insertError) {
+      alert(`Could not save section: ${insertError.message}`)
+      chartSectionsRef.current[pageKey] = chartSectionsRef.current[pageKey].filter((s) => s !== optimistic)
+      redrawPage(pageKey)
+      return
+    }
+    optimistic.id = data.id
+  }
+
+  const removeSection = async (pageKey, section) => {
+    chartSectionsRef.current[pageKey] = (chartSectionsRef.current[pageKey] ?? []).filter((s) => s !== section)
+    redrawPage(pageKey)
+    const { error: deleteError } = await supabase.from('chart_sections').delete().eq('id', section.id)
+    if (deleteError) alert(`Could not remove section: ${deleteError.message}`)
+  }
+
+  // Briefly highlights a pinged section for everyone (including the
+  // sender), independent of whatever tool is active.
   const drawPingFlash = (ctx, canvas, pageKey) => {
     const flash = pingFlashRef.current[pageKey]
     if (!flash) return
-    const band = bandsFor(pageKey)[flash.bandIndex]
-    if (!band) return
+    const section = (chartSectionsRef.current[pageKey] ?? [])[flash.sectionIndex]
+    if (!section) return
     ctx.fillStyle = 'rgba(255, 60, 60, 0.35)'
-    ctx.fillRect(0, band.y0 * canvas.height, canvas.width, (band.y1 - band.y0) * canvas.height)
+    ctx.fillRect(
+      section.x0 * canvas.width,
+      section.y0 * canvas.height,
+      (section.x1 - section.x0) * canvas.width,
+      (section.y1 - section.y0) * canvas.height
+    )
   }
 
-  const showPingFlash = (pageKey, bandIndex) => {
+  const showPingFlash = (pageKey, sectionIndex) => {
     const existing = pingFlashRef.current[pageKey]
     if (existing) clearTimeout(existing.timeoutId)
     const timeoutId = setTimeout(() => {
       delete pingFlashRef.current[pageKey]
       redrawPage(pageKey)
     }, 2500)
-    pingFlashRef.current[pageKey] = { bandIndex, timeoutId }
+    pingFlashRef.current[pageKey] = { sectionIndex, timeoutId }
     redrawPage(pageKey)
   }
 
@@ -239,55 +281,8 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
     if (idx !== -1) setCurrentIndex(idx)
   }
 
-  const sendPing = (pageKey, bandIndex) => {
-    channelRef.current?.send({ type: 'broadcast', event: 'ping', payload: { pageKey, bandIndex } })
-  }
-
-  const findNearestMarker = (pageKey, y) => {
-    const markers = chartLinesRef.current[pageKey] ?? []
-    return markers.find((m) => Math.abs(m.y - y) < 0.02)
-  }
-
-  const drawMarkers = (ctx, canvas, pageKey) => {
-    for (const m of chartLinesRef.current[pageKey] ?? []) {
-      const y = m.y * canvas.height
-      ctx.strokeStyle = '#e63946'
-      ctx.lineWidth = 2
-      ctx.beginPath()
-      ctx.moveTo(0, y)
-      ctx.lineTo(canvas.width, y)
-      ctx.stroke()
-    }
-  }
-
-  const toggleMarker = async (chartId, pageNumber, pageKey, pos) => {
-    const existing = findNearestMarker(pageKey, pos[1])
-
-    if (existing) {
-      chartLinesRef.current[pageKey] = chartLinesRef.current[pageKey].filter((m) => m !== existing)
-      redrawPage(pageKey)
-      const { error: deleteError } = await supabase.from('chart_lines').delete().eq('id', existing.id)
-      if (deleteError) alert(`Could not remove line marker: ${deleteError.message}`)
-      return
-    }
-
-    const optimistic = { y: pos[1] }
-    chartLinesRef.current[pageKey] = [...(chartLinesRef.current[pageKey] ?? []), optimistic]
-    redrawPage(pageKey)
-
-    const { data, error: insertError } = await supabase
-      .from('chart_lines')
-      .insert({ chart_id: chartId, page_number: pageNumber, y_position: pos[1], created_by: currentUserId })
-      .select()
-      .single()
-
-    if (insertError) {
-      alert(`Could not save line marker: ${insertError.message}`)
-      chartLinesRef.current[pageKey] = chartLinesRef.current[pageKey].filter((m) => m !== optimistic)
-      redrawPage(pageKey)
-      return
-    }
-    optimistic.id = data.id
+  const sendPing = (pageKey, sectionIndex) => {
+    channelRef.current?.send({ type: 'broadcast', event: 'ping', payload: { pageKey, sectionIndex } })
   }
 
   const redrawPage = (pageKey) => {
@@ -298,8 +293,8 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
     for (const ann of annotationsRef.current[pageKey] ?? []) {
       renderAnnotation(ctx, canvas, ann)
     }
-    if (toolRef.current === 'markLines') {
-      drawMarkers(ctx, canvas, pageKey)
+    if (toolRef.current === 'markSections') {
+      drawSections(ctx, canvas, pageKey)
     }
     drawPingFlash(ctx, canvas, pageKey)
   }
@@ -364,6 +359,8 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
     let drawing = false
     let erasing = false
     let points = []
+    let markStart = null
+    const TAP_THRESHOLD = 0.01 // normalized; below this, treat a drag as a tap
 
     const getPos = (e) => {
       const rect = overlay.getBoundingClientRect()
@@ -389,8 +386,9 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
         return
       }
 
-      if (tool_ === 'markLines') {
-        toggleMarker(chartId, pageNumber, pageKey, pos)
+      if (tool_ === 'markSections') {
+        markStart = pos
+        overlay.setPointerCapture(e.pointerId)
         return
       }
 
@@ -408,6 +406,12 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
         return
       }
 
+      if (markStart) {
+        redrawPage(pageKey)
+        drawSectionPreview(overlay.getContext('2d'), overlay, markStart, pos)
+        return
+      }
+
       if (!drawing) return
       points.push(pos)
       redrawPage(pageKey)
@@ -419,8 +423,32 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
       })
     })
 
-    overlay.addEventListener('pointerup', () => {
+    overlay.addEventListener('pointerup', (e) => {
       erasing = false
+
+      if (markStart) {
+        const start = markStart
+        markStart = null
+        const pos = getPos(e)
+        const dx = Math.abs(pos[0] - start[0])
+        const dy = Math.abs(pos[1] - start[1])
+
+        if (dx < TAP_THRESHOLD && dy < TAP_THRESHOLD) {
+          const hit = findSectionAt(pageKey, pos)
+          if (hit) removeSection(pageKey, hit)
+          else redrawPage(pageKey)
+          return
+        }
+
+        addSection(chartId, pageNumber, pageKey, {
+          x0: Math.min(start[0], pos[0]),
+          x1: Math.max(start[0], pos[0]),
+          y0: Math.min(start[1], pos[1]),
+          y1: Math.max(start[1], pos[1]),
+        })
+        return
+      }
+
       if (!drawing) return
       drawing = false
       if (points.length < 2) {
@@ -481,33 +509,37 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
       })
   }
 
-  const loadChartLines = () => {
+  const loadChartSections = () => {
     supabase
-      .from('chart_lines')
-      .select('id, chart_id, page_number, y_position')
+      .from('chart_sections')
+      .select('id, chart_id, page_number, x0, y0, x1, y1')
       .in('chart_id', charts.map((c) => c.id))
       .then(({ data }) => {
         for (const row of data ?? []) {
           const pageKey = `${row.chart_id}:${row.page_number}`
-          const list = chartLinesRef.current[pageKey]
-          if (list) list.push({ id: row.id, y: row.y_position })
+          const list = chartSectionsRef.current[pageKey]
+          if (list) list.push({ id: row.id, x0: row.x0, y0: row.y0, x1: row.x1, y1: row.y1 })
         }
-        Object.keys(chartLinesRef.current).forEach((k) => redrawPage(k))
+        Object.keys(chartSectionsRef.current).forEach((k) => redrawPage(k))
       })
   }
 
-  // Double-click/double-tap a marked line while in 'view' mode to ping it —
-  // jumps everyone currently looking at this chart to that line, with a
-  // brief highlight flash. Gated to host/editor, like other actions that
-  // affect everyone's view.
+  // Double-click/double-tap a marked section while in 'view' mode to ping
+  // it — jumps everyone currently looking at this chart to that section,
+  // with a brief highlight flash. Gated to host/editor, like other actions
+  // that affect everyone's view. No-ops if the tap isn't inside any marked
+  // section.
   const attachPing = (canvas, pageKey) => {
     canvas.addEventListener('dblclick', (e) => {
       if (toolRef.current !== 'view' || !canDrawShared) return
       const rect = canvas.getBoundingClientRect()
       const pos = [(e.clientX - rect.left) / rect.width, (e.clientY - rect.top) / rect.height]
-      const bandIndex = findNearestLine(pageKey, pos)
-      if (bandIndex === -1) return
-      sendPing(pageKey, bandIndex)
+      const sections = chartSectionsRef.current[pageKey] ?? []
+      const sectionIndex = sections.findIndex(
+        (s) => pos[0] >= s.x0 && pos[0] <= s.x1 && pos[1] >= s.y0 && pos[1] <= s.y1
+      )
+      if (sectionIndex === -1) return
+      sendPing(pageKey, sectionIndex)
     })
   }
 
@@ -518,7 +550,7 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
     pageWrappersRef.current = {}
     overlaysRef.current = {}
     annotationsRef.current = {}
-    chartLinesRef.current = {}
+    chartSectionsRef.current = {}
     pageOrderRef.current = []
     currentIndexRef.current = 0
     setCurrentIndex(0)
@@ -564,7 +596,7 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
         pageWrappersRef.current[pageKey] = pageWrapper
         overlaysRef.current[pageKey] = overlay
         annotationsRef.current[pageKey] = []
-        chartLinesRef.current[pageKey] = []
+        chartSectionsRef.current[pageKey] = []
         pageOrderRef.current.push(pageKey)
         attachDrawing(overlay, chart.id, pageNumber, pageKey)
         attachPing(canvas, pageKey)
@@ -583,7 +615,7 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
       if (!cancelled) {
         layoutPages()
         loadAnnotations()
-        loadChartLines()
+        loadChartSections()
       }
     })().catch((err) => setError(err.message))
 
@@ -625,7 +657,7 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
       )
       .on('broadcast', { event: 'ping' }, ({ payload }) => {
         jumpToPageKey(payload.pageKey)
-        showPingFlash(payload.pageKey, payload.bandIndex)
+        showPingFlash(payload.pageKey, payload.sectionIndex)
       })
       .subscribe()
 
@@ -679,23 +711,23 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
           Erase
         </button>{' '}
         {canDrawShared && (
-          <button onClick={() => setTool('markLines')} disabled={tool === 'markLines'}>
-            Mark Lines
+          <button onClick={() => setTool('markSections')} disabled={tool === 'markSections'}>
+            Mark Sections
           </button>
         )}{' '}
         {!fullscreen && <button onClick={() => setFullscreen(true)}>Expand</button>}
       </div>
 
-      {tool === 'markLines' && (
+      {tool === 'markSections' && (
         <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: '#666' }}>
-          Tap the start of each staff/line to mark it (tap an existing mark to remove it). Once
-          marked, switch to View and double-click/double-tap a line to ping everyone currently
-          viewing this chart to that spot.
+          Drag to select a region, like a screenshot tool (tap an existing section to remove it).
+          Sections can't overlap. Once marked, switch to View and double-click/double-tap a
+          section to ping everyone currently viewing this chart to that spot.
         </p>
       )}
       {canDrawShared && tool === 'view' && (
         <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: '#666' }}>
-          Double-click/double-tap a marked line to ping everyone viewing this chart.
+          Double-click/double-tap a marked section to ping everyone viewing this chart.
         </p>
       )}
 
