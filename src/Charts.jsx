@@ -325,7 +325,7 @@ function Charts({ currentUserId, canManage, isHost }) {
 
       {canManage && (
         <div style={{ marginTop: '1.5rem', background: colors.card, borderRadius: '14px', padding: '1rem' }}>
-          <h3 style={{ marginTop: 0 }}>Upload a chart</h3>
+          <h3 style={{ marginTop: 0 }}>Upload Song</h3>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
             <input
               type="text"
@@ -349,10 +349,18 @@ function Charts({ currentUserId, canManage, isHost }) {
               style={inputStyle}
             />
             <input
+              id="chart-file-input"
               type="file"
               accept="application/pdf"
               onChange={(e) => setFile(e.target.files[0] ?? null)}
+              style={{ display: 'none' }}
             />
+            <label htmlFor="chart-file-input" style={{ ...buttonStyle, display: 'inline-block', cursor: 'pointer' }}>
+              Choose File
+            </label>
+            <span style={{ color: colors.subtext, fontSize: '0.85rem' }}>
+              {file ? file.name : 'No file chosen'}
+            </span>
             <button onClick={uploadChart} disabled={uploading} style={primaryButtonStyle}>
               {uploading ? 'Uploading...' : 'Upload'}
             </button>
