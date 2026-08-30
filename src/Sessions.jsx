@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { supabase } from './supabaseClient'
 import PdfViewer from './PdfViewer'
-import { colors, buttonStyle, primaryButtonStyle, inputStyle } from './theme'
+import { colors, buttonStyle, primaryButtonStyle, inputStyle, iconButtonStyle } from './theme'
+import { RefreshIcon, DocumentIcon, ChevronLeftIcon, ChevronRightIcon, PlayIcon } from './icons'
 
 function Sessions({ currentUserId, canManage }) {
   const [sessions, setSessions] = useState([])
@@ -101,45 +102,77 @@ function Sessions({ currentUserId, canManage }) {
   const openSession = sessions.find((s) => s.id === openSessionId)
 
   return (
-    <div style={{ maxWidth: '700px' }}>
-      <h1 style={{ fontSize: '1.75rem', fontWeight: 800 }}>Sessions</h1>
-
+    <div style={{ maxWidth: '700px', margin: '0 auto' }}>
       {!openSession && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-          {sessions.map((s) => (
-            <button
-              key={s.id}
-              onClick={() => setOpenSessionId(s.id)}
-              style={{
-                background: colors.card,
-                color: colors.text,
-                border: 'none',
-                borderRadius: '14px',
-                padding: '0.9rem 1rem',
-                textAlign: 'left',
-                cursor: 'pointer',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-              }}
-            >
-              <span style={{ fontWeight: 700 }}>{s.title}</span>
-              <span style={{ color: colors.subtext, fontSize: '0.85rem' }}>
-                {s.session_charts.length} chart{s.session_charts.length === 1 ? '' : 's'}
-              </span>
+        <>
+          <h1 style={{ margin: 0, fontSize: '1.75rem', fontWeight: 800, textAlign: 'center' }}>Sessions</h1>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', alignItems: 'center', marginTop: '0.75rem' }}>
+            <span style={{ background: colors.card, color: colors.subtext, padding: '0.4rem 0.8rem', borderRadius: '999px', fontSize: '0.8rem' }}>
+              {sessions.length} session{sessions.length === 1 ? '' : 's'}
+            </span>
+            <button onClick={loadSessions} title="Refresh" style={{ ...iconButtonStyle(false), borderRadius: '999px' }}>
+              <RefreshIcon />
             </button>
-          ))}
-        </div>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', marginTop: '1rem' }}>
+            {sessions.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => setOpenSessionId(s.id)}
+                style={{
+                  background: colors.card,
+                  color: colors.text,
+                  border: 'none',
+                  borderRadius: '14px',
+                  padding: '0.9rem 1rem',
+                  textAlign: 'left',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: '0.75rem',
+                }}
+              >
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: '1.05rem' }}>{s.title}</div>
+                  <div style={{ color: colors.subtext, fontSize: '0.85rem' }}>
+                    {s.session_charts.length} song{s.session_charts.length === 1 ? '' : 's'}
+                  </div>
+                </div>
+                <span style={{ color: colors.subtext, flexShrink: 0 }}>
+                  <ChevronRightIcon />
+                </span>
+              </button>
+            ))}
+            {sessions.length === 0 && (
+              <p style={{ color: colors.subtext, textAlign: 'center' }}>No sessions yet.</p>
+            )}
+          </div>
+        </>
       )}
 
       {openSession && (
         <div>
-          <button onClick={() => setOpenSessionId(null)} style={buttonStyle}>
-            ‹ Back to sessions
+          <button
+            onClick={() => setOpenSessionId(null)}
+            style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
+          >
+            <ChevronLeftIcon /> Sessions
           </button>
-          <h2 style={{ marginTop: '1rem' }}>{openSession.title}</h2>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-            {orderedCharts(openSession).map((sc) => (
+
+          <h2 style={{ marginTop: '1rem', fontSize: '1.5rem', fontWeight: 800 }}>{openSession.title}</h2>
+
+          <button
+            onClick={() => openCombined(openSession)}
+            style={{ ...primaryButtonStyle, width: '100%', padding: '0.9rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', fontSize: '1rem' }}
+          >
+            <PlayIcon /> View All (Combined)
+          </button>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', marginTop: '1rem' }}>
+            {orderedCharts(openSession).map((sc, index) => (
               <div
                 key={sc.chart_id}
                 style={{
@@ -152,21 +185,42 @@ function Sessions({ currentUserId, canManage }) {
                   gap: '0.75rem',
                 }}
               >
-                <div>
-                  <div style={{ fontWeight: 700 }}>{sc.charts.title}</div>
-                  {sc.charts.musical_key && (
-                    <div style={{ color: colors.subtext, fontSize: '0.85rem' }}>Key of {sc.charts.musical_key}</div>
-                  )}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', minWidth: 0 }}>
+                  <span
+                    style={{
+                      background: colors.border,
+                      color: colors.subtext,
+                      width: '1.6rem',
+                      height: '1.6rem',
+                      borderRadius: '999px',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '0.8rem',
+                      flexShrink: 0,
+                    }}
+                  >
+                    {index + 1}
+                  </span>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {sc.charts.title}
+                    </div>
+                  </div>
                 </div>
-                <button onClick={() => openChart(sc.charts)} style={buttonStyle}>
-                  View
-                </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
+                  {sc.charts.musical_key && (
+                    <span style={{ background: colors.accentBg, color: colors.accent, borderRadius: '8px', padding: '0.25rem 0.6rem', fontSize: '0.85rem', fontWeight: 600 }}>
+                      {sc.charts.musical_key}
+                    </span>
+                  )}
+                  <button onClick={() => openChart(sc.charts)} title="View" style={iconButtonStyle(false)}>
+                    <DocumentIcon />
+                  </button>
+                </div>
               </div>
             ))}
           </div>
-          <button onClick={() => openCombined(openSession)} style={{ ...primaryButtonStyle, marginTop: '1rem' }}>
-            View all (combined)
-          </button>
         </div>
       )}
 
@@ -181,7 +235,7 @@ function Sessions({ currentUserId, canManage }) {
 
       {canManage && !openSession && (
         <div style={{ marginTop: '1.5rem', background: colors.card, borderRadius: '14px', padding: '1rem' }}>
-          <h3 style={{ marginTop: 0 }}>Create a session</h3>
+          <h3 style={{ marginTop: 0 }}>Create a Session</h3>
           <input
             type="text"
             placeholder="Session title"
@@ -191,7 +245,19 @@ function Sessions({ currentUserId, canManage }) {
           />
           <div style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
             {availableCharts.map((c) => (
-              <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <label
+                key={c.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  background: colors.bg,
+                  border: `1px solid ${colors.border}`,
+                  borderRadius: '8px',
+                  padding: '0.5rem 0.75rem',
+                  cursor: 'pointer',
+                }}
+              >
                 <input
                   type="checkbox"
                   checked={selectedChartIds.includes(c.id)}
@@ -202,10 +268,10 @@ function Sessions({ currentUserId, canManage }) {
             ))}
           </div>
           <p style={{ color: colors.subtext, fontSize: '0.85rem' }}>
-            Charts are added to the session in the order you check them.
+            Songs are added to the session in the order you check them.
           </p>
           <button onClick={createSession} style={primaryButtonStyle}>
-            Create session
+            Create Session
           </button>
         </div>
       )}
