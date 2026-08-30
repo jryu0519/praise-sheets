@@ -7,6 +7,7 @@ import { ChevronUpIcon, ChevronDownIcon } from './icons'
 
 const PING_FLASH_MS = 5000
 const NOTIFICATION_MS = 8000
+const MAX_NOTIFICATIONS = 4
 const MIN_SECTION_SIZE = 0.02 // normalized; drags smaller than this are ignored, not saved as junk sections
 
 const toolButtonStyle = (active) => (active ? primaryButtonStyle : buttonStyle)
@@ -100,20 +101,31 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
   // track to the current page. Height is measured from the viewport's
   // actual current position, so collapsing the toolbar (or fullscreen)
   // immediately gives the PDF the reclaimed space instead of a fixed cap.
+  //
+  // Measures available width from the viewport's *parent*, not the
+  // viewport itself — the viewport's own width gets capped below to
+  // exactly `perView` slots and centered, so measuring it directly would
+  // create a shrinking feedback loop on repeated layout passes. Without
+  // this cap, a wide screen where the height constraint (not width) is
+  // binding would leave the viewport spanning the full window width,
+  // letting extra page slots peek in beyond the intended 1 or 2.
   const layoutPages = () => {
     const viewport = viewportRef.current
-    if (!viewport) return
-    const viewportWidth = viewport.clientWidth
-    const perView = viewportWidth >= TWO_PAGE_MIN_WIDTH ? 2 : 1
+    if (!viewport || !viewport.parentElement) return
+    const availableWidth = viewport.parentElement.clientWidth
+    const perView = availableWidth >= TWO_PAGE_MIN_WIDTH ? 2 : 1
     const top = viewport.getBoundingClientRect().top
     const maxHeight = window.innerHeight - top - 16
 
-    const widthConstrained = viewportWidth / perView
+    const widthConstrained = availableWidth / perView
     const heightConstrained = maxHeight / pageAspectRef.current
     const slotWidth = Math.min(widthConstrained, heightConstrained)
 
     pagesPerViewRef.current = perView
     slotWidthRef.current = slotWidth
+
+    viewport.style.width = `${slotWidth * perView}px`
+    viewport.style.margin = '0 auto'
 
     Object.values(pageWrappersRef.current).forEach((wrapper) => {
       wrapper.style.width = `${slotWidth}px`
@@ -376,7 +388,10 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
   const addNotification = (pageKey, sectionIndex) => {
     const [chartId] = pageKey.split(':')
     const id = `${pageKey}-${sectionIndex}-${Date.now()}`
-    setNotifications((list) => [...list, { id, pageKey, sectionIndex, chartTitle: chartTitleFor(chartId) }])
+    // cap at MAX_NOTIFICATIONS — drop the oldest rather than pile up
+    setNotifications((list) =>
+      [...list, { id, pageKey, sectionIndex, chartTitle: chartTitleFor(chartId) }].slice(-MAX_NOTIFICATIONS)
+    )
     setTimeout(() => {
       setNotifications((list) => list.filter((n) => n.id !== id))
     }, NOTIFICATION_MS)
