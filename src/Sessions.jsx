@@ -92,7 +92,7 @@ function Sessions({ currentUserId, canManage }) {
       alert(`Could not open file: ${error.message}`)
       return
     }
-    setViewing({ charts: [{ id: chart.id, url: data.signedUrl }] })
+    setViewing({ charts: [{ id: chart.id, title: chart.title, url: data.signedUrl }] })
   }
 
   const openCombined = async (session) => {
@@ -103,7 +103,7 @@ function Sessions({ currentUserId, canManage }) {
             .from('charts')
             .createSignedUrl(sc.charts.storage_path, 300)
           if (error) throw error
-          return { id: sc.charts.id, url: data.signedUrl }
+          return { id: sc.charts.id, title: sc.charts.title, url: data.signedUrl }
         })
       )
       setViewing({ charts: signed })

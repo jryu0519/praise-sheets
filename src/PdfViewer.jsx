@@ -5,6 +5,10 @@ import { supabase } from './supabaseClient'
 import { colors, buttonStyle, primaryButtonStyle } from './theme'
 import { ChevronUpIcon, ChevronDownIcon } from './icons'
 
+const PING_FLASH_MS = 5000
+const NOTIFICATION_MS = 8000
+const MIN_SECTION_SIZE = 0.02 // normalized; drags smaller than this are ignored, not saved as junk sections
+
 const toolButtonStyle = (active) => (active ? primaryButtonStyle : buttonStyle)
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker
@@ -48,7 +52,8 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
   const [error, setError] = useState(null)
   const [fullscreen, setFullscreen] = useState(false)
   const [toolbarVisible, setToolbarVisible] = useState(true)
-  const [tool, setTool] = useState('view') // 'view' | 'draw' | 'text' | 'erase' | 'markSections'
+  const [tool, setTool] = useState('view') // 'view' | 'draw' | 'text' | 'erase' | 'markSections' | 'eraseSections'
+  const [notifications, setNotifications] = useState([]) // [{ id, pageKey, sectionIndex, chartTitle }]
   const [visibility, setVisibility] = useState('personal') // 'personal' | 'shared'
   const [color, setColor] = useState(COLORS[0])
   const [lineWidth, setLineWidth] = useState(LINE_WIDTHS[1])
@@ -216,6 +221,15 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
     }
   }
 
+  // Highlights the section under the pointer while in the Erase Sections
+  // tool, so it's clear what a tap will remove.
+  const drawEraseHighlight = (ctx, canvas, pageKey, pos) => {
+    const hit = findSectionAt(pageKey, pos)
+    if (!hit) return
+    ctx.fillStyle = 'rgba(239, 68, 68, 0.25)'
+    ctx.fillRect(hit.x0 * canvas.width, hit.y0 * canvas.height, (hit.x1 - hit.x0) * canvas.width, (hit.y1 - hit.y0) * canvas.height)
+  }
+
   const drawSectionPreview = (ctx, canvas, start, current) => {
     const x0 = Math.min(start[0], current[0]) * canvas.width
     const y0 = Math.min(start[1], current[1]) * canvas.height
@@ -262,15 +276,17 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
     if (deleteError) alert(`Could not remove section: ${deleteError.message}`)
   }
 
-  // Briefly highlights a pinged section for everyone (including the
-  // sender), independent of whatever tool is active.
+  // Briefly outlines a pinged section for everyone (including the sender),
+  // independent of whatever tool is active. Outline only — the inside
+  // stays blank so the chart content underneath is still fully readable.
   const drawPingFlash = (ctx, canvas, pageKey) => {
     const flash = pingFlashRef.current[pageKey]
     if (!flash) return
     const section = (chartSectionsRef.current[pageKey] ?? [])[flash.sectionIndex]
     if (!section) return
-    ctx.fillStyle = 'rgba(255, 60, 60, 0.35)'
-    ctx.fillRect(
+    ctx.strokeStyle = colors.ping
+    ctx.lineWidth = 4
+    ctx.strokeRect(
       section.x0 * canvas.width,
       section.y0 * canvas.height,
       (section.x1 - section.x0) * canvas.width,
@@ -284,7 +300,7 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
     const timeoutId = setTimeout(() => {
       delete pingFlashRef.current[pageKey]
       redrawPage(pageKey)
-    }, 2500)
+    }, PING_FLASH_MS)
     pingFlashRef.current[pageKey] = { sectionIndex, timeoutId }
     redrawPage(pageKey)
   }
@@ -298,6 +314,27 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
     channelRef.current?.send({ type: 'broadcast', event: 'ping', payload: { pageKey, sectionIndex } })
   }
 
+  const chartTitleFor = (chartId) => charts.find((c) => c.id === chartId)?.title ?? 'a chart'
+
+  const addNotification = (pageKey, sectionIndex) => {
+    const [chartId] = pageKey.split(':')
+    const id = `${pageKey}-${sectionIndex}-${Date.now()}`
+    setNotifications((list) => [...list, { id, pageKey, sectionIndex, chartTitle: chartTitleFor(chartId) }])
+    setTimeout(() => {
+      setNotifications((list) => list.filter((n) => n.id !== id))
+    }, NOTIFICATION_MS)
+  }
+
+  const dismissNotification = (id) => {
+    setNotifications((list) => list.filter((n) => n.id !== id))
+  }
+
+  const goToNotification = (n) => {
+    jumpToPageKey(n.pageKey)
+    showPingFlash(n.pageKey, n.sectionIndex)
+    dismissNotification(n.id)
+  }
+
   const redrawPage = (pageKey) => {
     const canvas = overlaysRef.current[pageKey]
     if (!canvas) return
@@ -306,7 +343,7 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
     for (const ann of annotationsRef.current[pageKey] ?? []) {
       renderAnnotation(ctx, canvas, ann)
     }
-    if (toolRef.current === 'markSections') {
+    if (toolRef.current === 'markSections' || toolRef.current === 'eraseSections') {
       drawSections(ctx, canvas, pageKey)
     }
     drawPingFlash(ctx, canvas, pageKey)
@@ -373,7 +410,6 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
     let erasing = false
     let points = []
     let markStart = null
-    const TAP_THRESHOLD = 0.01 // normalized; below this, treat a drag as a tap
 
     const getPos = (e) => {
       const rect = overlay.getBoundingClientRect()
@@ -405,6 +441,12 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
         return
       }
 
+      if (tool_ === 'eraseSections') {
+        const hit = findSectionAt(pageKey, pos)
+        if (hit) removeSection(pageKey, hit)
+        return
+      }
+
       drawing = true
       points = [pos]
       overlay.setPointerCapture(e.pointerId)
@@ -422,6 +464,12 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
       if (markStart) {
         redrawPage(pageKey)
         drawSectionPreview(overlay.getContext('2d'), overlay, markStart, pos)
+        return
+      }
+
+      if (toolRef.current === 'eraseSections') {
+        redrawPage(pageKey)
+        drawEraseHighlight(overlay.getContext('2d'), overlay, pageKey, pos)
         return
       }
 
@@ -443,22 +491,19 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
         const start = markStart
         markStart = null
         const pos = getPos(e)
-        const dx = Math.abs(pos[0] - start[0])
-        const dy = Math.abs(pos[1] - start[1])
-
-        if (dx < TAP_THRESHOLD && dy < TAP_THRESHOLD) {
-          const hit = findSectionAt(pageKey, pos)
-          if (hit) removeSection(pageKey, hit)
-          else redrawPage(pageKey)
-          return
-        }
-
-        addSection(chartId, pageNumber, pageKey, {
+        const rect = {
           x0: Math.min(start[0], pos[0]),
           x1: Math.max(start[0], pos[0]),
           y0: Math.min(start[1], pos[1]),
           y1: Math.max(start[1], pos[1]),
-        })
+        }
+
+        if (rect.x1 - rect.x0 < MIN_SECTION_SIZE || rect.y1 - rect.y0 < MIN_SECTION_SIZE) {
+          redrawPage(pageKey)
+          return
+        }
+
+        addSection(chartId, pageNumber, pageKey, rect)
         return
       }
 
@@ -640,7 +685,7 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
   useEffect(() => {
     const chartIds = charts.map((c) => c.id)
     const channel = supabase
-      .channel(`annotations-${chartsKey}`)
+      .channel(`annotations-${chartsKey}`, { config: { broadcast: { self: true } } })
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'annotations', filter: `chart_id=in.(${chartIds.join(',')})` },
@@ -669,8 +714,8 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
         }
       )
       .on('broadcast', { event: 'ping' }, ({ payload }) => {
-        jumpToPageKey(payload.pageKey)
         showPingFlash(payload.pageKey, payload.sectionIndex)
+        addNotification(payload.pageKey, payload.sectionIndex)
       })
       .subscribe()
 
@@ -710,6 +755,41 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
         </button>
       )}
 
+      {notifications.length > 0 && (
+        <div style={{ position: 'fixed', top: '1rem', right: '1rem', zIndex: 2000, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+          {notifications.map((n) => (
+            <div
+              key={n.id}
+              style={{
+                background: colors.card,
+                border: `2px solid ${colors.ping}`,
+                borderRadius: '12px',
+                padding: '0.75rem 1rem',
+                boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.75rem',
+                maxWidth: '280px',
+              }}
+            >
+              <button
+                onClick={() => goToNotification(n)}
+                style={{ background: 'none', border: 'none', color: colors.text, textAlign: 'left', cursor: 'pointer', padding: 0, flex: 1 }}
+              >
+                <strong>📍 Ping</strong>
+                <div style={{ fontSize: '0.85rem', color: colors.subtext }}>{n.chartTitle} — tap to go there</div>
+              </button>
+              <button
+                onClick={() => dismissNotification(n.id)}
+                style={{ background: 'none', border: 'none', color: colors.subtext, cursor: 'pointer', fontSize: '1rem' }}
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
         <button onClick={onClose} style={buttonStyle}>
           Close
@@ -743,6 +823,11 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
                 Mark Sections
               </button>
             )}
+            {canDrawShared && (
+              <button onClick={() => setTool('eraseSections')} style={toolButtonStyle(tool === 'eraseSections')}>
+                Erase Sections
+              </button>
+            )}
             {!fullscreen && (
               <button onClick={() => setFullscreen(true)} style={buttonStyle}>
                 Expand
@@ -752,9 +837,14 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
 
           {tool === 'markSections' && (
             <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: colors.subtext }}>
-              Drag to select a region, like a screenshot tool (tap an existing section to remove it).
-              Sections can't overlap. Once marked, switch to View and double-click/double-tap a
-              section to ping everyone currently viewing this chart to that spot.
+              Drag to select a region, like a screenshot tool. Sections can't overlap. Once marked,
+              switch to View and double-click/double-tap a section to ping everyone currently
+              viewing this chart to that spot.
+            </p>
+          )}
+          {tool === 'eraseSections' && (
+            <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: colors.subtext }}>
+              Tap a section to remove it.
             </p>
           )}
           {canDrawShared && tool === 'view' && (

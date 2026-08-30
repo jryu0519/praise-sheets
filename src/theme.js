@@ -10,6 +10,7 @@ export const colors = {
   ready: '#22c55e',
   readyBg: '#123821',
   danger: '#ef4444',
+  ping: '#f59e0b',
 }
 
 export const pageStyle = {

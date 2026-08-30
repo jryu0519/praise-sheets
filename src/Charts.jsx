@@ -83,16 +83,16 @@ function Charts({ currentUserId, canManage, isHost }) {
     setUploading(false)
   }
 
-  const viewChart = async (chartId, storagePath) => {
+  const viewChart = async (chart) => {
     const { data, error } = await supabase.storage
       .from('charts')
-      .createSignedUrl(storagePath, 300)
+      .createSignedUrl(chart.storage_path, 300)
 
     if (error) {
       alert(`Could not open file: ${error.message}`)
       return
     }
-    setViewing({ id: chartId, url: data.signedUrl })
+    setViewing({ id: chart.id, title: chart.title, url: data.signedUrl })
   }
 
   const toggleReady = async (chart) => {
@@ -248,7 +248,7 @@ function Charts({ currentUserId, canManage, isHost }) {
                       {c.musical_key}
                     </span>
                   )}
-                  <button onClick={() => viewChart(c.id, c.storage_path)} title="View" style={iconButtonStyle(false)}>
+                  <button onClick={() => viewChart(c)} title="View" style={iconButtonStyle(false)}>
                     <DocumentIcon />
                   </button>
                   {isHost && (
