@@ -152,17 +152,67 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
     }
   }, [])
 
+  // Finds which page slot a viewport-relative point falls on, and the
+  // position within that page (normalized 0..1) — used to resolve a
+  // double-click/tap to a specific page + section, independent of which
+  // page is currently scrolled into view.
+  const findPageAtPoint = (clientX, clientY) => {
+    for (const [pageKey, wrapper] of Object.entries(pageWrappersRef.current)) {
+      const rect = wrapper.getBoundingClientRect()
+      if (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom) {
+        return { pageKey, pos: [(clientX - rect.left) / rect.width, (clientY - rect.top) / rect.height] }
+      }
+    }
+    return null
+  }
+
   // Swipe/drag to turn pages, one page at a time. Only active in 'view' —
   // drawing tools capture the pointer on their own overlay instead.
+  //
+  // Double-click/double-tap-to-ping is detected manually here from raw
+  // pointerdown timing/position, rather than relying on the browser's
+  // native 'dblclick' event — dblclick was unreliable for mouse input,
+  // most likely because `setPointerCapture` below redirects where the
+  // browser resolves the click target, but touch (which synthesizes
+  // clicks differently) wasn't affected. Detecting it ourselves from
+  // pointer events works identically for mouse and touch.
   useEffect(() => {
     const viewport = viewportRef.current
     if (!viewport) return
     let startX = null
     let baseIndex = 0
     let deltaX = 0
+    let lastTapTime = 0
+    let lastTapPos = null
+    const DOUBLE_TAP_MS = 350
+    const DOUBLE_TAP_RADIUS_PX = 20
 
     const onPointerDown = (e) => {
       if (toolRef.current !== 'view') return
+
+      const now = Date.now()
+      const isDoubleTap =
+        lastTapPos &&
+        now - lastTapTime < DOUBLE_TAP_MS &&
+        Math.hypot(e.clientX - lastTapPos[0], e.clientY - lastTapPos[1]) < DOUBLE_TAP_RADIUS_PX
+      lastTapTime = now
+      lastTapPos = [e.clientX, e.clientY]
+
+      if (isDoubleTap && canDrawShared) {
+        lastTapPos = null
+        const hit = findPageAtPoint(e.clientX, e.clientY)
+        if (hit) {
+          const sections = chartSectionsRef.current[hit.pageKey] ?? []
+          const sectionIndex = sections.findIndex(
+            (s) => hit.pos[0] >= s.x0 && hit.pos[0] <= s.x1 && hit.pos[1] >= s.y0 && hit.pos[1] <= s.y1
+          )
+          if (sectionIndex !== -1) {
+            sendPing(hit.pageKey, sectionIndex)
+            return
+          }
+        }
+      }
+
       startX = e.clientX
       baseIndex = currentIndexRef.current
       deltaX = 0
@@ -589,25 +639,6 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
       })
   }
 
-  // Double-click/double-tap a marked section while in 'view' mode to ping
-  // it — jumps everyone currently looking at this chart to that section,
-  // with a brief highlight flash. Gated to host/editor, like other actions
-  // that affect everyone's view. No-ops if the tap isn't inside any marked
-  // section.
-  const attachPing = (canvas, pageKey) => {
-    canvas.addEventListener('dblclick', (e) => {
-      if (toolRef.current !== 'view' || !canDrawShared) return
-      const rect = canvas.getBoundingClientRect()
-      const pos = [(e.clientX - rect.left) / rect.width, (e.clientY - rect.top) / rect.height]
-      const sections = chartSectionsRef.current[pageKey] ?? []
-      const sectionIndex = sections.findIndex(
-        (s) => pos[0] >= s.x0 && pos[0] <= s.x1 && pos[1] >= s.y0 && pos[1] <= s.y1
-      )
-      if (sectionIndex === -1) return
-      sendPing(pageKey, sectionIndex)
-    })
-  }
-
   useEffect(() => {
     let cancelled = false
     const track = trackRef.current
@@ -664,7 +695,6 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
         chartSectionsRef.current[pageKey] = []
         pageOrderRef.current.push(pageKey)
         attachDrawing(overlay, chart.id, pageNumber, pageKey)
-        attachPing(canvas, pageKey)
         numPagesRef.current += 1
         setNumPages(numPagesRef.current)
       }
