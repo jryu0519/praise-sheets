@@ -474,7 +474,7 @@ function PdfViewer({ url, chartId, currentUserId, canDrawShared, onClose }) {
       {fullscreen && (
         <button
           onClick={() => setFullscreen(false)}
-          style={{ position: 'absolute', top: '0.5rem', right: '0.5rem' }}
+          style={{ position: 'absolute', bottom: '0.5rem', right: '0.5rem' }}
         >
           Back to regular size
         </button>
