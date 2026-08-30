@@ -55,11 +55,48 @@ once we get to UI/UX polish, not before. Key elements to carry over:
       swipeable pager — `PdfViewer.jsx` now takes a `charts: [{id, url}]`
       list instead of a single chart, with pages keyed by `chartId:pageNumber`
       so annotations and realtime sync work correctly across chart boundaries
-- [ ] Phase 5 — Real-time pings ← START HERE NEXT (see design notes below —
-      scope is bigger than a plain coordinate ping; now buildable, since
-      sessions finally have a UI to ping "within")
-- [ ] Phase 6 — Roles + host handoff refinements
+- [x] **Phase 5 — Real-time pings**: host/editor marks each staff/line's
+      start once per chart page via a "Mark Lines" tool (`chart_lines`
+      table); double-clicking/double-tapping a marked line in View mode
+      broadcasts a ping (Supabase Realtime `broadcast`, not a stored row)
+      that jumps everyone currently viewing that chart to the same line and
+      flashes it briefly. Automatic text-based line detection (clustering
+      pdf.js `getTextContent()`) was tried first and abandoned — see build
+      notes below for why.
+- [x] **Host-only chart archive/delete**: hosts can archive (reversible,
+      hidden from the default list, `charts.archived`) or permanently
+      delete a chart; both are host-only at the RLS level (not just a
+      hidden button) — editors can still upload but not remove
+- [ ] Phase 6 — Roles + host handoff refinements ← START HERE NEXT
 - [ ] Phase 7 — PWA (installable)
+
+## Phase 5 build notes (pings)
+
+- **Automatic detection doesn't work on real charts and was abandoned.**
+  pdf.js's `getTextContent()` only returns genuine text objects; on the
+  test chart ("순전한 예배", exported from Korean notation software), only
+  a plain instructional header line was real text — every chord, lyric,
+  and measure number is rendered as vector shapes/custom-font glyphs with
+  no extractable text. Clustering by Y-position, and later anchoring on
+  left-margin measure-number labels, both failed for the same underlying
+  reason: there was no text data there to detect in the first place. This
+  ruled out a fully-automatic approach for this app's real-world PDFs.
+- **Manual marking replaced it**: `chart_lines` (chart_id, page_number,
+  y_position 0..1, created_by) stores one row per marked line-start,
+  managed by host/editor via a new "Mark Lines" tool in `PdfViewer.jsx`
+  (tap to add, tap an existing mark to remove). A line's band spans from
+  its marker's y down to the next marker (or page bottom). No realtime
+  sync on this table — it's rare, low-urgency setup, not live editing.
+- **Pinging is a realtime `broadcast` event, not a database row** — there's
+  no ping history, just a transient `{pageKey, bandIndex}` message on the
+  same channel already used for annotation `postgres_changes`. On receipt,
+  every viewer (including the sender) jumps to that page/line and shows a
+  2.5s highlight flash, independent of whatever tool is active.
+- Ping-sending is gated to `canDrawShared` (host/editor) client-side only —
+  there's no RLS equivalent for ephemeral broadcast messages, so a
+  determined member could technically bypass it. Judged acceptable for a
+  small trusted team; revisit (Realtime Authorization / private channels)
+  if that turns out to matter.
 
 ## Navigation/Sessions build notes
 
