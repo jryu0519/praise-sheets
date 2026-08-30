@@ -140,6 +140,18 @@ concrete style than the very first (lavender/black/lime) reference shared
   pattern used everywhere else in this file (annotations, sections), and
   separately broadcasts to everyone else — not dependent on any echo
   config or round-trip back to yourself.
+- **Double-click ping didn't work on desktop/mouse (only touch)** — fixed
+  2026-08-30. Native `dblclick` on the page canvas was the trigger, but
+  mouse double-clicks were unreliable while touch worked; most likely
+  `viewport.setPointerCapture()` in the swipe handler (needed for
+  reliable drag tracking) was redirecting where the browser resolves the
+  click target for mouse specifically. Replaced with manual double-tap
+  detection from raw `pointerdown` timing (<350ms) and position (<20px)
+  inside the same swipe-handling effect in `PdfViewer.jsx` — one code
+  path for mouse and touch, no dependency on browser click synthesis.
+  Uses a new `findPageAtPoint()` helper to resolve viewport-relative
+  coordinates to a specific page + section regardless of which page is
+  currently scrolled into view.
 - **Erase Sections is now a dedicated tool**, not an overloaded tap-vs-drag
   gesture inside Mark Sections (the old approach used a very tight 1%
   movement threshold to distinguish "tap to remove" from "drag to create,"
