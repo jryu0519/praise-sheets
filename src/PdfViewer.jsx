@@ -310,7 +310,14 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
     if (idx !== -1) setCurrentIndex(idx)
   }
 
+  // Shows the flash + notification immediately on the sender's own screen
+  // (an optimistic local update, same pattern as everywhere else in this
+  // file) rather than waiting on the broadcast to round-trip back — that
+  // round-trip depends on `broadcast.self`, which is not something to
+  // build the sender's own feedback on top of.
   const sendPing = (pageKey, sectionIndex) => {
+    showPingFlash(pageKey, sectionIndex)
+    addNotification(pageKey, sectionIndex)
     channelRef.current?.send({ type: 'broadcast', event: 'ping', payload: { pageKey, sectionIndex } })
   }
 
@@ -685,7 +692,7 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
   useEffect(() => {
     const chartIds = charts.map((c) => c.id)
     const channel = supabase
-      .channel(`annotations-${chartsKey}`, { config: { broadcast: { self: true } } })
+      .channel(`annotations-${chartsKey}`)
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'annotations', filter: `chart_id=in.(${chartIds.join(',')})` },
