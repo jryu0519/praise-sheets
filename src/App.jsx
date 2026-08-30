@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from './supabaseClient'
 import Team from './Team'
+import Charts from './Charts'
 
 function App() {
   const [session, setSession] = useState(null)
@@ -71,6 +72,12 @@ function App() {
           <p>Role: {role ?? 'loading...'}</p>
           <button onClick={signOut}>Sign out</button>
           {role && <Team currentUserId={session.user.id} isHost={role === 'host'} />}
+          {role && (
+            <Charts
+              currentUserId={session.user.id}
+              canManage={role === 'host' || role === 'editor'}
+            />
+          )}
         </div>
       ) : (
         <div>

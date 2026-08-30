@@ -95,3 +95,155 @@ select
   case when row_number() over (order by created_at) = 1 then 'host' else 'member' end
 from auth.users
 on conflict (user_id) do nothing;
+
+-- Extends is_host() to also allow editors. Charts/sessions can be managed by
+-- hosts and editors alike; only plain members are read-only.
+create function public.is_host_or_editor()
+returns boolean
+language sql
+security definer set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from public.memberships
+    where user_id = auth.uid() and role in ('host', 'editor')
+  );
+$$;
+
+-- Private bucket for chart PDFs. Not public — access goes through the
+-- storage.objects policies below, same as every other table here.
+insert into storage.buckets (id, name, public)
+values ('charts', 'charts', false);
+
+-- Charts: one row per uploaded PDF chart. storage_path points at the file
+-- inside the 'charts' bucket.
+create table charts (
+  id uuid primary key default gen_random_uuid(),
+  title text not null,
+  musical_key text,
+  storage_path text not null,
+  uploaded_by uuid references auth.users (id),
+  created_at timestamptz not null default now()
+);
+
+alter table charts enable row level security;
+
+create policy "charts are readable by any signed-in user"
+  on charts for select
+  to authenticated
+  using (true);
+
+create policy "hosts and editors can manage charts"
+  on charts for all
+  to authenticated
+  using (public.is_host_or_editor())
+  with check (public.is_host_or_editor());
+
+-- Sessions: a setlist for a particular gathering.
+create table sessions (
+  id uuid primary key default gen_random_uuid(),
+  title text not null,
+  created_by uuid references auth.users (id),
+  created_at timestamptz not null default now()
+);
+
+alter table sessions enable row level security;
+
+create policy "sessions are readable by any signed-in user"
+  on sessions for select
+  to authenticated
+  using (true);
+
+create policy "hosts and editors can manage sessions"
+  on sessions for all
+  to authenticated
+  using (public.is_host_or_editor())
+  with check (public.is_host_or_editor());
+
+-- Session_charts: ordered join between a session and its charts.
+create table session_charts (
+  session_id uuid not null references sessions (id) on delete cascade,
+  chart_id uuid not null references charts (id) on delete cascade,
+  position integer not null,
+  primary key (session_id, chart_id)
+);
+
+alter table session_charts enable row level security;
+
+create policy "session_charts are readable by any signed-in user"
+  on session_charts for select
+  to authenticated
+  using (true);
+
+create policy "hosts and editors can manage session_charts"
+  on session_charts for all
+  to authenticated
+  using (public.is_host_or_editor())
+  with check (public.is_host_or_editor());
+
+-- Storage policies: any signed-in user can read chart files; only
+-- hosts/editors can upload, replace, or delete them.
+create policy "chart files are readable by any signed-in user"
+  on storage.objects for select
+  to authenticated
+  using (bucket_id = 'charts');
+
+create policy "hosts and editors can upload chart files"
+  on storage.objects for insert
+  to authenticated
+  with check (bucket_id = 'charts' and public.is_host_or_editor());
+
+create policy "hosts and editors can update chart files"
+  on storage.objects for update
+  to authenticated
+  using (bucket_id = 'charts' and public.is_host_or_editor())
+  with check (bucket_id = 'charts' and public.is_host_or_editor());
+
+create policy "hosts and editors can delete chart files"
+  on storage.objects for delete
+  to authenticated
+  using (bucket_id = 'charts' and public.is_host_or_editor());
+
+-- Annotations: one row per finished pen stroke or text note on a chart page.
+-- `points` is a normalized [[x,y], ...] path (0..1 coordinates, relative to
+-- the page's width/height) for a stroke, or a single [[x,y]] anchor point
+-- for a text note — this keeps annotations aligned with the PDF regardless
+-- of zoom level or screen size.
+create table annotations (
+  id uuid primary key default gen_random_uuid(),
+  chart_id uuid not null references charts (id) on delete cascade,
+  page_number integer not null,
+  type text not null default 'stroke' check (type in ('stroke', 'text')),
+  visibility text not null check (visibility in ('shared', 'personal')),
+  points jsonb not null,
+  text text,
+  color text not null default '#e63946',
+  size integer not null default 2,
+  created_by uuid not null references auth.users (id),
+  created_at timestamptz not null default now(),
+  constraint text_annotations_have_text check (type <> 'text' or text is not null)
+);
+
+alter table annotations enable row level security;
+
+-- Shared strokes are visible to the whole team; personal strokes are only
+-- visible to whoever drew them.
+create policy "annotations are readable by owner or if shared"
+  on annotations for select
+  to authenticated
+  using (visibility = 'shared' or created_by = auth.uid());
+
+-- Anyone can manage their own strokes, but only hosts/editors may create
+-- (or keep) a stroke marked 'shared' — matches who can manage charts.
+create policy "users can manage their own annotations"
+  on annotations for all
+  to authenticated
+  using (created_by = auth.uid())
+  with check (
+    created_by = auth.uid()
+    and (visibility = 'personal' or public.is_host_or_editor())
+  );
+
+-- Broadcast inserts/updates/deletes on this table so PdfViewer can render
+-- other people's finished strokes without a page reload.
+alter publication supabase_realtime add table annotations;
