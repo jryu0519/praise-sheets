@@ -2,8 +2,26 @@ import { useEffect, useState } from 'react'
 import { supabase } from './supabaseClient'
 import PdfViewer from './PdfViewer'
 
+const sortCharts = (charts, sortBy) => {
+  const sorted = [...charts]
+  if (sortBy === 'key') {
+    sorted.sort((a, b) => {
+      if (!a.musical_key && !b.musical_key) return a.title.localeCompare(b.title)
+      if (!a.musical_key) return 1
+      if (!b.musical_key) return -1
+      return a.musical_key.localeCompare(b.musical_key) || a.title.localeCompare(b.title)
+    })
+  } else if (sortBy === 'date') {
+    sorted.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+  } else {
+    sorted.sort((a, b) => a.title.localeCompare(b.title))
+  }
+  return sorted
+}
+
 function Charts({ currentUserId, canManage }) {
   const [charts, setCharts] = useState([])
+  const [sortBy, setSortBy] = useState('title') // 'title' | 'key' | 'date'
   const [title, setTitle] = useState('')
   const [musicalKey, setMusicalKey] = useState('')
   const [file, setFile] = useState(null)
@@ -13,8 +31,7 @@ function Charts({ currentUserId, canManage }) {
   const loadCharts = () => {
     supabase
       .from('charts')
-      .select('id, title, musical_key, storage_path')
-      .order('created_at', { ascending: true })
+      .select('id, title, musical_key, storage_path, created_at')
       .then(({ data }) => setCharts(data ?? []))
   }
 
@@ -65,14 +82,23 @@ function Charts({ currentUserId, canManage }) {
       alert(`Could not open file: ${error.message}`)
       return
     }
-    setViewing({ chartId, url: data.signedUrl })
+    setViewing({ id: chartId, url: data.signedUrl })
   }
 
   return (
     <div style={{ marginTop: '2rem' }}>
-      <h2>Charts</h2>
+      <div style={{ textAlign: 'right' }}>
+        <label>
+          Sort by:{' '}
+          <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+            <option value="title">Title (A-Z)</option>
+            <option value="key">Key</option>
+            <option value="date">Date uploaded (newest first)</option>
+          </select>
+        </label>
+      </div>
       <ul>
-        {charts.map((c) => (
+        {sortCharts(charts, sortBy).map((c) => (
           <li key={c.id}>
             {c.title}
             {c.musical_key && ` — key of ${c.musical_key}`}{' '}
@@ -83,8 +109,7 @@ function Charts({ currentUserId, canManage }) {
 
       {viewing && (
         <PdfViewer
-          url={viewing.url}
-          chartId={viewing.chartId}
+          charts={[viewing]}
           currentUserId={currentUserId}
           canDrawShared={canManage}
           onClose={() => setViewing(null)}

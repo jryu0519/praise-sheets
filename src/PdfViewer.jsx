@@ -13,12 +13,19 @@ const TEXT_HIT_RADIUS_PX = 20
 const TWO_PAGE_MIN_WIDTH = 640
 const SWIPE_THRESHOLD_RATIO = 0.2
 
-function PdfViewer({ url, chartId, currentUserId, canDrawShared, onClose }) {
+// `charts` is a list of { id, url } in display order — one entry for a
+// single chart, or a whole session's charts back to back for a combined,
+// continuously page-turning view. A page "slot" is keyed by
+// `${chartId}:${pageNumber}` throughout, since the same page_number can
+// occur in more than one chart.
+function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
+  const chartsKey = charts.map((c) => c.id).join(',')
+
   const viewportRef = useRef(null) // outer, overflow-hidden window onto the track
   const trackRef = useRef(null) // horizontal flex strip holding every page slot
-  const pageWrappersRef = useRef({}) // page_number -> wrapper div (sized as a slot)
-  const overlaysRef = useRef({}) // page_number -> overlay canvas element
-  const annotationsRef = useRef({}) // page_number -> array of annotation rows (with id)
+  const pageWrappersRef = useRef({}) // pageKey -> wrapper div (sized as a slot)
+  const overlaysRef = useRef({}) // pageKey -> overlay canvas element
+  const annotationsRef = useRef({}) // pageKey -> array of annotation rows (with id)
   const toolRef = useRef('view')
   const visibilityRef = useRef('personal')
   const colorRef = useRef(COLORS[0])
@@ -170,12 +177,12 @@ function PdfViewer({ url, chartId, currentUserId, canDrawShared, onClose }) {
     }
   }, [])
 
-  const redrawPage = (pageNumber) => {
-    const canvas = overlaysRef.current[pageNumber]
+  const redrawPage = (pageKey) => {
+    const canvas = overlaysRef.current[pageKey]
     if (!canvas) return
     const ctx = canvas.getContext('2d')
     ctx.clearRect(0, 0, canvas.width, canvas.height)
-    for (const ann of annotationsRef.current[pageNumber] ?? []) {
+    for (const ann of annotationsRef.current[pageKey] ?? []) {
       renderAnnotation(ctx, canvas, ann)
     }
   }
@@ -203,10 +210,10 @@ function PdfViewer({ url, chartId, currentUserId, canDrawShared, onClose }) {
     ctx.stroke()
   }
 
-  const findHit = (canvas, pageNumber, pos) => {
+  const findHit = (canvas, pageKey, pos) => {
     const px = pos[0] * canvas.width
     const py = pos[1] * canvas.height
-    const annotations = annotationsRef.current[pageNumber] ?? []
+    const annotations = annotationsRef.current[pageKey] ?? []
     return annotations.find((ann) => {
       if (ann.type === 'text') {
         const [x, y] = ann.points[0]
@@ -218,10 +225,10 @@ function PdfViewer({ url, chartId, currentUserId, canDrawShared, onClose }) {
     })
   }
 
-  const eraseAnnotation = async (pageNumber, ann) => {
-    const list = annotationsRef.current[pageNumber] ?? []
-    annotationsRef.current[pageNumber] = list.filter((a) => a.id !== ann.id)
-    redrawPage(pageNumber)
+  const eraseAnnotation = async (pageKey, ann) => {
+    const list = annotationsRef.current[pageKey] ?? []
+    annotationsRef.current[pageKey] = list.filter((a) => a.id !== ann.id)
+    redrawPage(pageKey)
 
     const { data, error: deleteError } = await supabase
       .from('annotations')
@@ -230,13 +237,13 @@ function PdfViewer({ url, chartId, currentUserId, canDrawShared, onClose }) {
       .select()
 
     if (deleteError || !data || data.length === 0) {
-      annotationsRef.current[pageNumber] = [...annotationsRef.current[pageNumber], ann]
-      redrawPage(pageNumber)
+      annotationsRef.current[pageKey] = [...annotationsRef.current[pageKey], ann]
+      redrawPage(pageKey)
       alert(deleteError ? `Could not erase: ${deleteError.message}` : 'You can only erase annotations you created.')
     }
   }
 
-  const attachDrawing = (overlay, pageNumber) => {
+  const attachDrawing = (overlay, chartId, pageNumber, pageKey) => {
     let drawing = false
     let erasing = false
     let points = []
@@ -254,14 +261,14 @@ function PdfViewer({ url, chartId, currentUserId, canDrawShared, onClose }) {
       if (tool_ === 'erase') {
         erasing = true
         overlay.setPointerCapture(e.pointerId)
-        const hit = findHit(overlay, pageNumber, pos)
-        if (hit) eraseAnnotation(pageNumber, hit)
+        const hit = findHit(overlay, pageKey, pos)
+        if (hit) eraseAnnotation(pageKey, hit)
         return
       }
 
       if (tool_ === 'text') {
         const label = window.prompt('Note text:')
-        if (label) insertAnnotation(pageNumber, 'text', [pos], label, fontSizeRef.current)
+        if (label) insertAnnotation(chartId, pageNumber, pageKey, 'text', [pos], label, fontSizeRef.current)
         return
       }
 
@@ -274,14 +281,14 @@ function PdfViewer({ url, chartId, currentUserId, canDrawShared, onClose }) {
       const pos = getPos(e)
 
       if (erasing) {
-        const hit = findHit(overlay, pageNumber, pos)
-        if (hit) eraseAnnotation(pageNumber, hit)
+        const hit = findHit(overlay, pageKey, pos)
+        if (hit) eraseAnnotation(pageKey, hit)
         return
       }
 
       if (!drawing) return
       points.push(pos)
-      redrawPage(pageNumber)
+      redrawPage(pageKey)
       renderAnnotation(overlay.getContext('2d'), overlay, {
         type: 'stroke',
         points,
@@ -300,17 +307,17 @@ function PdfViewer({ url, chartId, currentUserId, canDrawShared, onClose }) {
       }
       const strokePoints = points
       points = []
-      insertAnnotation(pageNumber, 'stroke', strokePoints, null, lineWidthRef.current)
+      insertAnnotation(chartId, pageNumber, pageKey, 'stroke', strokePoints, null, lineWidthRef.current)
     })
   }
 
-  const insertAnnotation = async (pageNumber, type, points, text, size) => {
+  const insertAnnotation = async (chartId, pageNumber, pageKey, type, points, text, size) => {
     const visibility_ = visibilityRef.current
     const color_ = colorRef.current
 
     const optimistic = { type, points, text, color: color_, size, visibility: visibility_, created_by: currentUserId }
-    annotationsRef.current[pageNumber] = [...(annotationsRef.current[pageNumber] ?? []), optimistic]
-    redrawPage(pageNumber)
+    annotationsRef.current[pageKey] = [...(annotationsRef.current[pageKey] ?? []), optimistic]
+    redrawPage(pageKey)
 
     const { data, error: insertError } = await supabase
       .from('annotations')
@@ -330,8 +337,8 @@ function PdfViewer({ url, chartId, currentUserId, canDrawShared, onClose }) {
 
     if (insertError) {
       alert(`Could not save annotation: ${insertError.message}`)
-      annotationsRef.current[pageNumber] = annotationsRef.current[pageNumber].filter((a) => a !== optimistic)
-      redrawPage(pageNumber)
+      annotationsRef.current[pageKey] = annotationsRef.current[pageKey].filter((a) => a !== optimistic)
+      redrawPage(pageKey)
       return
     }
     optimistic.id = data.id
@@ -340,14 +347,15 @@ function PdfViewer({ url, chartId, currentUserId, canDrawShared, onClose }) {
   const loadAnnotations = () => {
     supabase
       .from('annotations')
-      .select('id, page_number, type, visibility, points, text, color, size, created_by')
-      .eq('chart_id', chartId)
+      .select('id, chart_id, page_number, type, visibility, points, text, color, size, created_by')
+      .in('chart_id', charts.map((c) => c.id))
       .then(({ data }) => {
         for (const row of data ?? []) {
-          const list = annotationsRef.current[row.page_number]
+          const pageKey = `${row.chart_id}:${row.page_number}`
+          const list = annotationsRef.current[pageKey]
           if (list) list.push(row)
         }
-        Object.keys(annotationsRef.current).forEach((p) => redrawPage(Number(p)))
+        Object.keys(annotationsRef.current).forEach((k) => redrawPage(k))
       })
   }
 
@@ -361,88 +369,99 @@ function PdfViewer({ url, chartId, currentUserId, canDrawShared, onClose }) {
     currentIndexRef.current = 0
     setCurrentIndex(0)
 
-    pdfjsLib
-      .getDocument({ url })
-      .promise.then(async (pdf) => {
-        numPagesRef.current = pdf.numPages
-        setNumPages(pdf.numPages)
-
-        for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
-          if (cancelled) return
-          const page = await pdf.getPage(pageNumber)
-          const viewport = page.getViewport({ scale: 1.5 })
-          if (pageNumber === 1) pageAspectRef.current = viewport.height / viewport.width
-
-          const pageWrapper = document.createElement('div')
-          pageWrapper.style.position = 'relative'
-          pageWrapper.style.flex = '0 0 auto'
-
-          const canvas = document.createElement('canvas')
-          canvas.width = viewport.width
-          canvas.height = viewport.height
-          canvas.style.display = 'block'
-          canvas.style.width = '100%'
-
-          const overlay = document.createElement('canvas')
-          overlay.width = viewport.width
-          overlay.height = viewport.height
-          overlay.style.position = 'absolute'
-          overlay.style.top = '0'
-          overlay.style.left = '0'
-          overlay.style.width = '100%'
-          overlay.style.height = '100%'
-          overlay.style.pointerEvents = toolRef.current === 'view' ? 'none' : 'auto'
-
-          pageWrapper.appendChild(canvas)
-          pageWrapper.appendChild(overlay)
-          track.appendChild(pageWrapper)
-
-          await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise
-          if (cancelled) return
-
-          pageWrappersRef.current[pageNumber] = pageWrapper
-          overlaysRef.current[pageNumber] = overlay
-          annotationsRef.current[pageNumber] = []
-          attachDrawing(overlay, pageNumber)
+    const buildChart = async (chart) => {
+      const pdf = await pdfjsLib.getDocument({ url: chart.url }).promise
+      for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+        if (cancelled) return
+        const page = await pdf.getPage(pageNumber)
+        const viewport = page.getViewport({ scale: 1.5 })
+        if (!pageAspectRef.current || pageAspectRef.current === 1.3) {
+          pageAspectRef.current = viewport.height / viewport.width
         }
 
-        if (!cancelled) {
-          layoutPages()
-          loadAnnotations()
-        }
-      })
-      .catch((err) => setError(err.message))
+        const pageKey = `${chart.id}:${pageNumber}`
+        const pageWrapper = document.createElement('div')
+        pageWrapper.style.position = 'relative'
+        pageWrapper.style.flex = '0 0 auto'
+
+        const canvas = document.createElement('canvas')
+        canvas.width = viewport.width
+        canvas.height = viewport.height
+        canvas.style.display = 'block'
+        canvas.style.width = '100%'
+
+        const overlay = document.createElement('canvas')
+        overlay.width = viewport.width
+        overlay.height = viewport.height
+        overlay.style.position = 'absolute'
+        overlay.style.top = '0'
+        overlay.style.left = '0'
+        overlay.style.width = '100%'
+        overlay.style.height = '100%'
+        overlay.style.pointerEvents = toolRef.current === 'view' ? 'none' : 'auto'
+
+        pageWrapper.appendChild(canvas)
+        pageWrapper.appendChild(overlay)
+        track.appendChild(pageWrapper)
+
+        await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise
+        if (cancelled) return
+
+        pageWrappersRef.current[pageKey] = pageWrapper
+        overlaysRef.current[pageKey] = overlay
+        annotationsRef.current[pageKey] = []
+        attachDrawing(overlay, chart.id, pageNumber, pageKey)
+        numPagesRef.current += 1
+        setNumPages(numPagesRef.current)
+      }
+    }
+
+    numPagesRef.current = 0
+    setNumPages(0)
+    ;(async () => {
+      for (const chart of charts) {
+        if (cancelled) return
+        await buildChart(chart)
+      }
+      if (!cancelled) {
+        layoutPages()
+        loadAnnotations()
+      }
+    })().catch((err) => setError(err.message))
 
     return () => {
       cancelled = true
     }
-  }, [url])
+  }, [chartsKey])
 
   useEffect(() => {
+    const chartIds = charts.map((c) => c.id)
     const channel = supabase
-      .channel(`annotations-${chartId}`)
+      .channel(`annotations-${chartsKey}`)
       .on(
         'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'annotations', filter: `chart_id=eq.${chartId}` },
+        { event: 'INSERT', schema: 'public', table: 'annotations', filter: `chart_id=in.(${chartIds.join(',')})` },
         (payload) => {
           const row = payload.new
           if (row.created_by === currentUserId) return
-          const list = annotationsRef.current[row.page_number]
+          const pageKey = `${row.chart_id}:${row.page_number}`
+          const list = annotationsRef.current[pageKey]
           if (list) {
             list.push(row)
-            redrawPage(row.page_number)
+            redrawPage(pageKey)
           }
         }
       )
       .on(
         'postgres_changes',
-        { event: 'DELETE', schema: 'public', table: 'annotations', filter: `chart_id=eq.${chartId}` },
+        { event: 'DELETE', schema: 'public', table: 'annotations', filter: `chart_id=in.(${chartIds.join(',')})` },
         (payload) => {
           const oldRow = payload.old
-          const list = annotationsRef.current[oldRow.page_number]
+          const pageKey = `${oldRow.chart_id}:${oldRow.page_number}`
+          const list = annotationsRef.current[pageKey]
           if (list) {
-            annotationsRef.current[oldRow.page_number] = list.filter((a) => a.id !== oldRow.id)
-            redrawPage(oldRow.page_number)
+            annotationsRef.current[pageKey] = list.filter((a) => a.id !== oldRow.id)
+            redrawPage(pageKey)
           }
         }
       )
@@ -451,7 +470,7 @@ function PdfViewer({ url, chartId, currentUserId, canDrawShared, onClose }) {
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [chartId, currentUserId])
+  }, [chartsKey, currentUserId])
 
   const goPrev = () => setCurrentIndex((i) => Math.max(0, i - 1))
   const goNext = () => setCurrentIndex((i) => Math.min(Math.max(numPages - 1, 0), i + 1))

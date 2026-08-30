@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'react'
 import { supabase } from './supabaseClient'
 import Team from './Team'
-import Charts from './Charts'
+import Home from './Home'
+import Sessions from './Sessions'
 
 function App() {
   const [session, setSession] = useState(null)
   const [role, setRole] = useState(null)
   const [loading, setLoading] = useState(true)
   const [authError, setAuthError] = useState(null)
+  const [page, setPage] = useState('home') // 'home' | 'sessions' | 'team'
+  const [menuOpen, setMenuOpen] = useState(false)
 
   useEffect(() => {
     const hashParams = new URLSearchParams(window.location.hash.slice(1))
@@ -63,20 +66,84 @@ function App() {
 
   if (loading) return null
 
+  const canManage = role === 'host' || role === 'editor'
+
   return (
     <div style={{ padding: '2rem', fontFamily: 'sans-serif' }}>
-      <h1>Praise Sheets</h1>
+      {!session && <h1>Praise Sheets</h1>}
       {session ? (
         <div>
-          <p>Signed in as {session.user.email}</p>
-          <p>Role: {role ?? 'loading...'}</p>
-          <button onClick={signOut}>Sign out</button>
-          {role && <Team currentUserId={session.user.id} isHost={role === 'host'} />}
+          <div
+            style={{
+              position: 'fixed',
+              bottom: '0.5rem',
+              right: '0.5rem',
+              fontSize: '0.7rem',
+              textAlign: 'right',
+              color: '#666',
+            }}
+          >
+            <p style={{ margin: 0 }}>Signed in as {session.user.email}</p>
+            <p style={{ margin: 0 }}>Role: {role ?? 'loading...'}</p>
+            <button onClick={signOut} style={{ fontSize: '0.7rem' }}>
+              Sign out
+            </button>
+          </div>
+
           {role && (
-            <Charts
-              currentUserId={session.user.id}
-              canManage={role === 'host' || role === 'editor'}
-            />
+            <div style={{ position: 'fixed', top: '0.5rem', left: '0.5rem', zIndex: 10 }}>
+              <button onClick={() => setMenuOpen((open) => !open)}>☰ Menu</button>
+              {menuOpen && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: '100%',
+                    left: 0,
+                    border: '1px solid #ccc',
+                    background: 'white',
+                    zIndex: 10,
+                  }}
+                >
+                  <button
+                    style={{ display: 'block', width: '100%' }}
+                    onClick={() => {
+                      setPage('home')
+                      setMenuOpen(false)
+                    }}
+                  >
+                    Home
+                  </button>
+                  <button
+                    style={{ display: 'block', width: '100%' }}
+                    onClick={() => {
+                      setPage('sessions')
+                      setMenuOpen(false)
+                    }}
+                  >
+                    Sessions
+                  </button>
+                  <button
+                    style={{ display: 'block', width: '100%' }}
+                    onClick={() => {
+                      setPage('team')
+                      setMenuOpen(false)
+                    }}
+                  >
+                    Team member organization
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {role && page === 'home' && (
+            <Home currentUserId={session.user.id} canManage={canManage} />
+          )}
+          {role && page === 'sessions' && (
+            <Sessions currentUserId={session.user.id} canManage={canManage} />
+          )}
+          {role && page === 'team' && (
+            <Team currentUserId={session.user.id} isHost={role === 'host'} />
           )}
         </div>
       ) : (
