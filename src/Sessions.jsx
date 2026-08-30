@@ -2,7 +2,17 @@ import { useEffect, useState } from 'react'
 import { supabase } from './supabaseClient'
 import PdfViewer from './PdfViewer'
 import { colors, buttonStyle, primaryButtonStyle, inputStyle, iconButtonStyle } from './theme'
-import { RefreshIcon, DocumentIcon, ChevronLeftIcon, ChevronRightIcon, PlayIcon } from './icons'
+import {
+  RefreshIcon,
+  DocumentIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  ChevronUpIcon,
+  ChevronDownIcon,
+  PlayIcon,
+  PencilIcon,
+  XIcon,
+} from './icons'
 
 function Sessions({ currentUserId, canManage }) {
   const [sessions, setSessions] = useState([])
@@ -11,6 +21,9 @@ function Sessions({ currentUserId, canManage }) {
   const [title, setTitle] = useState('')
   const [selectedChartIds, setSelectedChartIds] = useState([])
   const [viewing, setViewing] = useState(null) // { charts: [{ id, url }] }
+  const [editingTitle, setEditingTitle] = useState(false)
+  const [titleDraft, setTitleDraft] = useState('')
+  const [addChartIds, setAddChartIds] = useState([])
 
   const loadSessions = () => {
     supabase
@@ -99,7 +112,68 @@ function Sessions({ currentUserId, canManage }) {
     }
   }
 
+  const startRename = (session) => {
+    setEditingTitle(true)
+    setTitleDraft(session.title)
+  }
+
+  const saveRename = async (session) => {
+    if (!titleDraft) return
+    const { error } = await supabase.from('sessions').update({ title: titleDraft }).eq('id', session.id)
+    if (error) {
+      alert(`Could not rename session: ${error.message}`)
+      return
+    }
+    setEditingTitle(false)
+    loadSessions()
+  }
+
+  const removeSong = async (session, chartId) => {
+    const { error } = await supabase
+      .from('session_charts')
+      .delete()
+      .eq('session_id', session.id)
+      .eq('chart_id', chartId)
+    if (error) alert(`Could not remove song: ${error.message}`)
+    else loadSessions()
+  }
+
+  const moveSong = async (session, index, direction) => {
+    const ordered = orderedCharts(session)
+    const otherIndex = index + direction
+    if (otherIndex < 0 || otherIndex >= ordered.length) return
+    const a = ordered[index]
+    const b = ordered[otherIndex]
+
+    const [{ error: e1 }, { error: e2 }] = await Promise.all([
+      supabase.from('session_charts').update({ position: b.position }).eq('session_id', session.id).eq('chart_id', a.chart_id),
+      supabase.from('session_charts').update({ position: a.position }).eq('session_id', session.id).eq('chart_id', b.chart_id),
+    ])
+    if (e1 || e2) alert(`Could not reorder: ${(e1 || e2).message}`)
+    else loadSessions()
+  }
+
+  const toggleAddChart = (chartId) => {
+    setAddChartIds((ids) => (ids.includes(chartId) ? ids.filter((id) => id !== chartId) : [...ids, chartId]))
+  }
+
+  const addSongsToSession = async (session) => {
+    if (addChartIds.length === 0) return
+    const startPos = Math.max(-1, ...session.session_charts.map((sc) => sc.position)) + 1
+    const rows = addChartIds.map((chart_id, i) => ({ session_id: session.id, chart_id, position: startPos + i }))
+    const { error } = await supabase.from('session_charts').insert(rows)
+    if (error) {
+      alert(`Could not add songs: ${error.message}`)
+      return
+    }
+    setAddChartIds([])
+    loadSessions()
+  }
+
   const openSession = sessions.find((s) => s.id === openSessionId)
+  const chartsNotInSession = openSession
+    ? availableCharts.filter((c) => !openSession.session_charts.some((sc) => sc.chart_id === c.id))
+    : []
 
   return (
     <div style={{ maxWidth: '700px', margin: '0 auto' }}>
@@ -156,23 +230,51 @@ function Sessions({ currentUserId, canManage }) {
       {openSession && (
         <div>
           <button
-            onClick={() => setOpenSessionId(null)}
+            onClick={() => {
+              setOpenSessionId(null)
+              setEditingTitle(false)
+              setAddChartIds([])
+            }}
             style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
           >
             <ChevronLeftIcon /> Sessions
           </button>
 
-          <h2 style={{ marginTop: '1rem', fontSize: '1.5rem', fontWeight: 800 }}>{openSession.title}</h2>
+          {editingTitle ? (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center', marginTop: '1rem' }}>
+              <input
+                type="text"
+                value={titleDraft}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                style={{ ...inputStyle, fontSize: '1.1rem' }}
+              />
+              <button onClick={() => saveRename(openSession)} style={primaryButtonStyle}>
+                Save
+              </button>
+              <button onClick={() => setEditingTitle(false)} style={buttonStyle}>
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '1rem' }}>
+              <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 800 }}>{openSession.title}</h2>
+              {canManage && (
+                <button onClick={() => startRename(openSession)} title="Rename session" style={iconButtonStyle(false)}>
+                  <PencilIcon />
+                </button>
+              )}
+            </div>
+          )}
 
           <button
             onClick={() => openCombined(openSession)}
-            style={{ ...primaryButtonStyle, width: '100%', padding: '0.9rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', fontSize: '1rem' }}
+            style={{ ...primaryButtonStyle, width: '100%', padding: '0.9rem', marginTop: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', fontSize: '1rem' }}
           >
             <PlayIcon /> View All (Combined)
           </button>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', marginTop: '1rem' }}>
-            {orderedCharts(openSession).map((sc, index) => (
+            {orderedCharts(openSession).map((sc, index, arr) => (
               <div
                 key={sc.chart_id}
                 style={{
@@ -208,7 +310,7 @@ function Sessions({ currentUserId, canManage }) {
                     </div>
                   </div>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexShrink: 0 }}>
                   {sc.charts.musical_key && (
                     <span style={{ background: colors.accentBg, color: colors.accent, borderRadius: '8px', padding: '0.25rem 0.6rem', fontSize: '0.85rem', fontWeight: 600 }}>
                       {sc.charts.musical_key}
@@ -217,10 +319,78 @@ function Sessions({ currentUserId, canManage }) {
                   <button onClick={() => openChart(sc.charts)} title="View" style={iconButtonStyle(false)}>
                     <DocumentIcon />
                   </button>
+                  {canManage && (
+                    <>
+                      <button
+                        onClick={() => moveSong(openSession, index, -1)}
+                        disabled={index === 0}
+                        title="Move up"
+                        style={{ ...iconButtonStyle(false), opacity: index === 0 ? 0.4 : 1 }}
+                      >
+                        <ChevronUpIcon />
+                      </button>
+                      <button
+                        onClick={() => moveSong(openSession, index, 1)}
+                        disabled={index === arr.length - 1}
+                        title="Move down"
+                        style={{ ...iconButtonStyle(false), opacity: index === arr.length - 1 ? 0.4 : 1 }}
+                      >
+                        <ChevronDownIcon />
+                      </button>
+                      <button
+                        onClick={() => removeSong(openSession, sc.chart_id)}
+                        title="Remove from session"
+                        style={{ ...iconButtonStyle(false), color: colors.danger }}
+                      >
+                        <XIcon />
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
             ))}
           </div>
+
+          {canManage && (
+            <div style={{ marginTop: '1.5rem', background: colors.card, borderRadius: '14px', padding: '1rem' }}>
+              <h3 style={{ marginTop: 0 }}>Add Songs</h3>
+              {chartsNotInSession.length === 0 ? (
+                <p style={{ color: colors.subtext, fontSize: '0.85rem' }}>
+                  Every available song is already in this session.
+                </p>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                    {chartsNotInSession.map((c) => (
+                      <label
+                        key={c.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.5rem',
+                          background: colors.bg,
+                          border: `1px solid ${colors.border}`,
+                          borderRadius: '8px',
+                          padding: '0.5rem 0.75rem',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={addChartIds.includes(c.id)}
+                          onChange={() => toggleAddChart(c.id)}
+                        />
+                        {c.title}
+                      </label>
+                    ))}
+                  </div>
+                  <button onClick={() => addSongsToSession(openSession)} style={{ ...primaryButtonStyle, marginTop: '0.75rem' }}>
+                    Add Selected
+                  </button>
+                </>
+              )}
+            </div>
+          )}
         </div>
       )}
 

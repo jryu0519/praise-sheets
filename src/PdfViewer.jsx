@@ -3,6 +3,7 @@ import * as pdfjsLib from 'pdfjs-dist'
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs?url'
 import { supabase } from './supabaseClient'
 import { colors, buttonStyle, primaryButtonStyle } from './theme'
+import { ChevronUpIcon, ChevronDownIcon } from './icons'
 
 const toolButtonStyle = (active) => (active ? primaryButtonStyle : buttonStyle)
 
@@ -46,6 +47,7 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
   const fullscreenRef = useRef(false)
   const [error, setError] = useState(null)
   const [fullscreen, setFullscreen] = useState(false)
+  const [toolbarVisible, setToolbarVisible] = useState(true)
   const [tool, setTool] = useState('view') // 'view' | 'draw' | 'text' | 'erase' | 'markSections'
   const [visibility, setVisibility] = useState('personal') // 'personal' | 'shared'
   const [color, setColor] = useState(COLORS[0])
@@ -90,13 +92,16 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
 
   // Sizes every page slot to fit the available width (1 or 2 pages across,
   // depending on screen width) and the available height, then snaps the
-  // track to the current page.
+  // track to the current page. Height is measured from the viewport's
+  // actual current position, so collapsing the toolbar (or fullscreen)
+  // immediately gives the PDF the reclaimed space instead of a fixed cap.
   const layoutPages = () => {
     const viewport = viewportRef.current
     if (!viewport) return
     const viewportWidth = viewport.clientWidth
     const perView = viewportWidth >= TWO_PAGE_MIN_WIDTH ? 2 : 1
-    const maxHeight = window.innerHeight * (fullscreenRef.current ? 0.85 : 0.7)
+    const top = viewport.getBoundingClientRect().top
+    const maxHeight = window.innerHeight - top - 16
 
     const widthConstrained = viewportWidth / perView
     const heightConstrained = maxHeight / pageAspectRef.current
@@ -130,6 +135,11 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
     const id = requestAnimationFrame(layoutPages)
     return () => cancelAnimationFrame(id)
   }, [fullscreen])
+
+  useEffect(() => {
+    const id = requestAnimationFrame(layoutPages)
+    return () => cancelAnimationFrame(id)
+  }, [toolbarVisible])
 
   useEffect(() => {
     return () => {
@@ -700,120 +710,134 @@ function PdfViewer({ charts, currentUserId, canDrawShared, onClose }) {
         </button>
       )}
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
         <button onClick={onClose} style={buttonStyle}>
           Close
         </button>
-        <button onClick={() => setTool('view')} style={toolButtonStyle(tool === 'view')}>
-          View
-        </button>
-        <button onClick={() => setTool('draw')} style={toolButtonStyle(tool === 'draw')}>
-          Draw
-        </button>
-        <button onClick={() => setTool('text')} style={toolButtonStyle(tool === 'text')}>
-          Text
-        </button>
-        <button onClick={() => setTool('erase')} style={toolButtonStyle(tool === 'erase')}>
-          Erase
-        </button>
-        {canDrawShared && (
-          <button onClick={() => setTool('markSections')} style={toolButtonStyle(tool === 'markSections')}>
-            Mark Sections
-          </button>
-        )}
-        {!fullscreen && (
-          <button onClick={() => setFullscreen(true)} style={buttonStyle}>
-            Expand
-          </button>
-        )}
-      </div>
-
-      {tool === 'markSections' && (
-        <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: colors.subtext }}>
-          Drag to select a region, like a screenshot tool (tap an existing section to remove it).
-          Sections can't overlap. Once marked, switch to View and double-click/double-tap a
-          section to ping everyone currently viewing this chart to that spot.
-        </p>
-      )}
-      {canDrawShared && tool === 'view' && (
-        <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: colors.subtext }}>
-          Double-click/double-tap a marked section to ping everyone viewing this chart.
-        </p>
-      )}
-
-      {(tool === 'draw' || tool === 'text') && (
-        <div style={{ marginTop: '0.75rem', display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
-          <label>
-            <input
-              type="radio"
-              checked={visibility === 'personal'}
-              onChange={() => setVisibility('personal')}
-            />{' '}
-            Just me
-          </label>
-          {canDrawShared && (
-            <label>
-              <input
-                type="radio"
-                checked={visibility === 'shared'}
-                onChange={() => setVisibility('shared')}
-              />{' '}
-              Everyone
-            </label>
-          )}
-          {COLORS.map((c) => (
-            <button
-              key={c}
-              onClick={() => setColor(c)}
-              style={{
-                background: c,
-                width: '1.5rem',
-                height: '1.5rem',
-                borderRadius: '6px',
-                border: color === c ? `2px solid ${colors.text}` : `1px solid ${colors.border}`,
-                verticalAlign: 'middle',
-                cursor: 'pointer',
-              }}
-            />
-          ))}
-          {tool === 'draw' && (
-            <span style={{ display: 'flex', gap: '0.4rem' }}>
-              {LINE_WIDTHS.map((w) => (
-                <button key={w} onClick={() => setLineWidth(w)} style={toolButtonStyle(lineWidth === w)}>
-                  {w}px
-                </button>
-              ))}
-            </span>
-          )}
-          {tool === 'text' && (
-            <span style={{ display: 'flex', gap: '0.4rem' }}>
-              {FONT_SIZES.map((s) => (
-                <button key={s} onClick={() => setFontSize(s)} style={toolButtonStyle(fontSize === s)}>
-                  {s}px
-                </button>
-              ))}
-            </span>
-          )}
-        </div>
-      )}
-
-      {error && <p style={{ color: colors.danger }}>Could not render PDF: {error}</p>}
-
-      <div style={{ marginTop: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-        <button onClick={goPrev} disabled={currentIndex === 0} style={buttonStyle}>
-          ‹ Prev
-        </button>
-        {numPages > 0 && (
-          <span style={{ color: colors.subtext, fontSize: '0.9rem' }}>
-            {pagesPerViewRef.current === 2 && currentIndex + 2 <= numPages
-              ? `Pages ${currentIndex + 1}-${currentIndex + 2} of ${numPages}`
-              : `Page ${currentIndex + 1} of ${numPages}`}
-          </span>
-        )}
-        <button onClick={goNext} disabled={currentIndex >= numPages - 1} style={buttonStyle}>
-          Next ›
+        <button
+          onClick={() => setToolbarVisible((v) => !v)}
+          style={{ ...buttonStyle, display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
+        >
+          {toolbarVisible ? <ChevronUpIcon /> : <ChevronDownIcon />}
+          {toolbarVisible ? 'Hide controls' : 'Show controls'}
         </button>
       </div>
+
+      {toolbarVisible && (
+        <>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginTop: '0.5rem' }}>
+            <button onClick={() => setTool('view')} style={toolButtonStyle(tool === 'view')}>
+              View
+            </button>
+            <button onClick={() => setTool('draw')} style={toolButtonStyle(tool === 'draw')}>
+              Draw
+            </button>
+            <button onClick={() => setTool('text')} style={toolButtonStyle(tool === 'text')}>
+              Text
+            </button>
+            <button onClick={() => setTool('erase')} style={toolButtonStyle(tool === 'erase')}>
+              Erase
+            </button>
+            {canDrawShared && (
+              <button onClick={() => setTool('markSections')} style={toolButtonStyle(tool === 'markSections')}>
+                Mark Sections
+              </button>
+            )}
+            {!fullscreen && (
+              <button onClick={() => setFullscreen(true)} style={buttonStyle}>
+                Expand
+              </button>
+            )}
+          </div>
+
+          {tool === 'markSections' && (
+            <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: colors.subtext }}>
+              Drag to select a region, like a screenshot tool (tap an existing section to remove it).
+              Sections can't overlap. Once marked, switch to View and double-click/double-tap a
+              section to ping everyone currently viewing this chart to that spot.
+            </p>
+          )}
+          {canDrawShared && tool === 'view' && (
+            <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: colors.subtext }}>
+              Double-click/double-tap a marked section to ping everyone viewing this chart.
+            </p>
+          )}
+
+          {(tool === 'draw' || tool === 'text') && (
+            <div style={{ marginTop: '0.75rem', display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
+              <label>
+                <input
+                  type="radio"
+                  checked={visibility === 'personal'}
+                  onChange={() => setVisibility('personal')}
+                />{' '}
+                Just me
+              </label>
+              {canDrawShared && (
+                <label>
+                  <input
+                    type="radio"
+                    checked={visibility === 'shared'}
+                    onChange={() => setVisibility('shared')}
+                  />{' '}
+                  Everyone
+                </label>
+              )}
+              {COLORS.map((c) => (
+                <button
+                  key={c}
+                  onClick={() => setColor(c)}
+                  style={{
+                    background: c,
+                    width: '1.5rem',
+                    height: '1.5rem',
+                    borderRadius: '6px',
+                    border: color === c ? `2px solid ${colors.text}` : `1px solid ${colors.border}`,
+                    verticalAlign: 'middle',
+                    cursor: 'pointer',
+                  }}
+                />
+              ))}
+              {tool === 'draw' && (
+                <span style={{ display: 'flex', gap: '0.4rem' }}>
+                  {LINE_WIDTHS.map((w) => (
+                    <button key={w} onClick={() => setLineWidth(w)} style={toolButtonStyle(lineWidth === w)}>
+                      {w}px
+                    </button>
+                  ))}
+                </span>
+              )}
+              {tool === 'text' && (
+                <span style={{ display: 'flex', gap: '0.4rem' }}>
+                  {FONT_SIZES.map((s) => (
+                    <button key={s} onClick={() => setFontSize(s)} style={toolButtonStyle(fontSize === s)}>
+                      {s}px
+                    </button>
+                  ))}
+                </span>
+              )}
+            </div>
+          )}
+
+          {error && <p style={{ color: colors.danger }}>Could not render PDF: {error}</p>}
+
+          <div style={{ marginTop: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <button onClick={goPrev} disabled={currentIndex === 0} style={buttonStyle}>
+              ‹ Prev
+            </button>
+            {numPages > 0 && (
+              <span style={{ color: colors.subtext, fontSize: '0.9rem' }}>
+                {pagesPerViewRef.current === 2 && currentIndex + 2 <= numPages
+                  ? `Pages ${currentIndex + 1}-${currentIndex + 2} of ${numPages}`
+                  : `Page ${currentIndex + 1} of ${numPages}`}
+              </span>
+            )}
+            <button onClick={goNext} disabled={currentIndex >= numPages - 1} style={buttonStyle}>
+              Next ›
+            </button>
+          </div>
+        </>
+      )}
 
       <div ref={viewportRef} style={{ marginTop: '0.5rem', overflow: 'hidden', touchAction: 'pan-y' }}>
         <div ref={trackRef} style={{ display: 'flex' }} />
