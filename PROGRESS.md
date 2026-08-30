@@ -173,6 +173,23 @@ concrete style than the very first (lavender/black/lime) reference shared
   determined member could technically bypass it. Judged acceptable for a
   small trusted team; revisit (Realtime Authorization / private channels)
   if that turns out to matter.
+- Notifications cap at `MAX_NOTIFICATIONS` (4), dropping the oldest first.
+- **Found and fixed a real layout bug (2026-08-30) behind "marked sections
+  look shifted."** `layoutPages()` capped pages-per-row (`perView`) at 2,
+  but never constrained the *viewport container's own width* to match. On
+  a wide screen where the height constraint was binding (rather than
+  width), each page slot ended up narrower than half the screen, and
+  since nothing capped the viewport to `perView` slots' worth of width,
+  extra page slots peeked into view beyond the intended 1 or 2. Fixed by
+  explicitly setting `viewport.style.width = slotWidth * perView` and
+  centering it (`margin: '0 auto'`) — available width is now measured
+  from the viewport's *parent* (not the viewport itself, to avoid a
+  shrinking feedback loop across repeated layout passes). This was
+  probably the real explanation for sections "not matching" — the
+  confusing over-wide layout likely caused marking on the wrong page/slot,
+  not an error in the coordinate math itself (which is normalized 0..1
+  against each canvas's own fixed internal resolution and should already
+  be resolution-independent).
 
 ## Navigation/Sessions build notes
 
